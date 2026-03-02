@@ -258,6 +258,40 @@ class TestExtractInteractiveContent:
         assert result.name == "SelectionUI"
         assert "Pick a thing" in result.content
 
+    def test_codex_selection_cursor(self):
+        """Codex uses › (U+203A) instead of ❯ (U+276F) for selection cursor."""
+        pane = "  Which option?\n\n  › Option A    Option B\n\n  Esc to cancel\n"
+        result = extract_interactive_content(pane)
+        assert result is not None
+        assert result.name == "SelectionUI"
+        assert "Which option?" in result.content
+
+    @pytest.mark.parametrize(
+        "bottom_text",
+        [
+            "  Press enter to confirm",
+            "  Press enter to select",
+            "  Press enter to submit",
+            "  Press enter to continue",
+            "  enter to submit",
+            "  enter to confirm",
+        ],
+        ids=[
+            "press-confirm",
+            "press-select",
+            "press-submit",
+            "press-continue",
+            "enter-submit",
+            "enter-confirm",
+        ],
+    )
+    def test_codex_bottom_text_variants(self, bottom_text: str):
+        """Codex uses different bottom action hint phrasing."""
+        pane = f"  Question?\n  › Option A\n    Option B\n{bottom_text}\n"
+        result = extract_interactive_content(pane)
+        assert result is not None
+        assert result.name == "SelectionUI"
+
     def test_restore_checkpoint(self):
         pane = (
             "  Restore the code to a previous state?\n"

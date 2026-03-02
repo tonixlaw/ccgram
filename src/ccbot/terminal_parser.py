@@ -122,11 +122,13 @@ UI_PATTERNS: list[UIPattern] = [
     # min_gap=1 because compact prompts can have ❯ directly above Esc.
     UIPattern(
         name="SelectionUI",
-        top=(re.compile(r"^\s*❯\s"),),
+        top=(re.compile(r"^\s*[❯›]\s"),),
         bottom=(
             re.compile(r"^\s*Esc to (cancel|exit)"),
             re.compile(r"^\s*Enter to (select|confirm|continue)"),
             re.compile(r"^\s*ctrl-g to edit"),
+            re.compile(r"(?i)^\s*Press enter to (confirm|select|continue|submit)"),
+            re.compile(r"(?i)^\s*enter to (submit|confirm|select)"),
         ),
         min_gap=1,
         context_above=10,
