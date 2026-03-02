@@ -47,7 +47,12 @@ from telegram.ext import (
 )
 
 from .cc_commands import get_cc_name, register_commands
-from .providers import detect_provider_from_command, get_provider
+from .providers import (
+    AgentProvider,
+    detect_provider_from_command,
+    get_provider,
+    registry,
+)
 from .config import config
 from .handlers.callback_data import (
     CB_DIR_CANCEL,
@@ -162,6 +167,18 @@ _TOPIC_CREATE_RETRY_BUFFER_SECONDS = 1
 
 def is_user_allowed(user_id: int | None) -> bool:
     return user_id is not None and config.is_user_allowed(user_id)
+
+
+def _menu_providers() -> list[AgentProvider]:
+    """Build ordered provider list for Telegram command menu registration."""
+    active = get_provider()
+    ordered: list[AgentProvider] = [active]
+    for name in registry.provider_names():
+        provider = registry.get(name)
+        if provider.capabilities.name == active.capabilities.name:
+            continue
+        ordered.append(provider)
+    return ordered
 
 
 # Group filter: when CCBOT_GROUP_ID is set, only process updates from that group.
@@ -933,13 +950,13 @@ async def _handle_new_window(event: NewWindowEvent, bot: Bot) -> None:
 async def post_init(application: Application) -> None:
     global session_monitor, _status_poll_task
 
-    await register_commands(application.bot, provider=get_provider())
+    await register_commands(application.bot, providers=_menu_providers())
 
     # Refresh CC commands every 10 minutes (picks up new skills/commands)
     async def _refresh_commands(context: ContextTypes.DEFAULT_TYPE) -> None:
         if context.bot:
             try:
-                await register_commands(context.bot, provider=get_provider())
+                await register_commands(context.bot, providers=_menu_providers())
             except _CommandRefreshError:
                 logger.exception("Failed to refresh CC commands, keeping previous menu")
 

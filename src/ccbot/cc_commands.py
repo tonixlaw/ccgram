@@ -15,7 +15,7 @@ Core components:
 import structlog
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Iterable, Literal, cast
 
 from ccbot.providers.base import AgentProvider
 from telegram import Bot, BotCommand
@@ -209,21 +209,24 @@ _name_map: dict[str, str] = {}
 def _refresh_cache(
     claude_dir: Path | None = None,
     provider: AgentProvider | None = None,
+    providers: Iterable[AgentProvider] | None = None,
 ) -> list[CCCommand]:
     """Re-discover commands and update the cache.
 
+    When *providers* is given, merges commands from each provider in order.
     When *provider* is given, uses ``provider.discover_commands()`` which
     returns ``list[DiscoveredCommand]``.
     Falls back to filesystem scanning via ``discover_cc_commands()`` otherwise.
     """
     global _name_map
-    if provider is not None:
+
+    def _commands_from_provider(p: AgentProvider) -> list[CCCommand]:
         from ccbot.config import config as _cfg
 
         base_dir = str(claude_dir) if claude_dir else str(_cfg.claude_config_dir)
         valid_sources = {"builtin", "skill", "command"}
-        discovered = provider.discover_commands(base_dir)
-        commands = [
+        discovered = p.discover_commands(base_dir)
+        return [
             CCCommand(
                 name=cmd.name,
                 telegram_name=_sanitize_telegram_name(cmd.name),
@@ -236,6 +239,13 @@ def _refresh_cache(
             for cmd in discovered
             if cmd.name
         ]
+
+    if providers is not None:
+        commands = []
+        for discovered_provider in providers:
+            commands.extend(_commands_from_provider(discovered_provider))
+    elif provider is not None:
+        commands = _commands_from_provider(provider)
     else:
         commands = discover_cc_commands(claude_dir)
     # First-wins: matches the dedup order in register_commands
@@ -256,15 +266,17 @@ async def register_commands(
     bot: Bot,
     claude_dir: Path | None = None,
     provider: AgentProvider | None = None,
+    providers: Iterable[AgentProvider] | None = None,
 ) -> None:
     """Discover CC commands and register them in the Telegram bot menu.
 
-    When *provider* is given, command discovery is delegated to the provider.
+    When *providers* is given, commands are merged from each provider in order.
+    When *provider* is given, command discovery is delegated to that provider.
     Registers bot-native commands first (new, history, etc.), then up to
     the remaining Telegram limit of discovered CC commands. Deduplicates
     by telegram_name (first-wins) and excludes collisions with bot-native names.
     """
-    commands = _refresh_cache(claude_dir, provider=provider)
+    commands = _refresh_cache(claude_dir, provider=provider, providers=providers)
 
     bot_commands = [BotCommand(name, desc) for name, desc in _BOT_COMMANDS]
     max_cc = _MAX_TELEGRAM_COMMANDS - len(bot_commands)

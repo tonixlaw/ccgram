@@ -263,6 +263,25 @@ class TestRegisterCommands:
         assert "compact" in names
 
     @pytest.mark.asyncio
+    async def test_registers_commands_from_multiple_providers(
+        self, tmp_path: Path
+    ) -> None:
+        from ccbot.providers.claude import ClaudeProvider
+        from ccbot.providers.codex import CodexProvider
+
+        bot = AsyncMock()
+        await register_commands(
+            bot,
+            claude_dir=tmp_path,
+            providers=[ClaudeProvider(), CodexProvider()],
+        )
+
+        registered = bot.set_my_commands.call_args[0][0]
+        names = [c.command for c in registered]
+        assert "status" in names
+        assert get_cc_name("status") == "/status"
+
+    @pytest.mark.asyncio
     async def test_description_truncation(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "skills" / "verbose"
         skill_dir.mkdir(parents=True)
