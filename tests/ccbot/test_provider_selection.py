@@ -6,9 +6,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telegram import InlineKeyboardMarkup
 
-from ccbot.handlers.callback_data import CB_DIR_CANCEL, CB_PROV_SELECT
-from ccbot.handlers.directory_browser import build_provider_picker
-from ccbot.handlers.directory_callbacks import _handle_confirm, _handle_provider_select
+from ccbot.handlers.callback_data import (
+    CB_DIR_CANCEL,
+    CB_MODE_SELECT,
+    CB_PROV_SELECT,
+)
+from ccbot.handlers.directory_browser import build_mode_picker, build_provider_picker
+from ccbot.handlers.directory_callbacks import (
+    _handle_confirm,
+    _handle_mode_select,
+    _handle_provider_select,
+)
 from ccbot.handlers.user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT
 
 
@@ -61,6 +69,22 @@ class TestBuildProviderPicker:
         home = str(Path.home())
         text, _keyboard = build_provider_picker(f"{home}/project")
         assert "~/project" in text
+
+
+class TestBuildModePicker:
+    def test_returns_text_and_keyboard(self) -> None:
+        text, keyboard = build_mode_picker("/home/user/project", "claude")
+        assert "Select Session Mode" in text
+        assert isinstance(keyboard, InlineKeyboardMarkup)
+
+    def test_mode_callbacks(self) -> None:
+        _text, keyboard = build_mode_picker("/tmp/test", "codex")
+        callbacks = [
+            btn.callback_data for row in keyboard.inline_keyboard for btn in row
+        ]
+        assert f"{CB_MODE_SELECT}codex:normal" in callbacks
+        assert f"{CB_MODE_SELECT}codex:yolo" in callbacks
+        assert CB_DIR_CANCEL in callbacks
 
 
 def _make_context(user_data: dict | None = None) -> MagicMock:
@@ -144,32 +168,21 @@ class TestHandleConfirmShowsProviderPicker:
 class TestHandleProviderSelect:
     @pytest.mark.asyncio
     @patch("ccbot.handlers.directory_callbacks.safe_edit", new_callable=AsyncMock)
-    @patch("ccbot.handlers.directory_callbacks.session_manager")
     @patch("ccbot.handlers.directory_callbacks.tmux_manager")
     @patch("ccbot.handlers.directory_callbacks.provider_registry")
-    async def test_creates_window_with_provider(
+    @patch("ccbot.handlers.directory_callbacks.session_manager")
+    async def test_shows_mode_picker(
         self,
+        mock_sm: MagicMock,
         mock_registry: MagicMock,
         mock_tmux: MagicMock,
-        mock_sm: MagicMock,
         mock_edit: AsyncMock,
     ) -> None:
         mock_registry.is_valid.return_value = True
-        mock_provider = MagicMock()
-        mock_provider.capabilities.launch_command = "codex"
-        mock_registry.get.return_value = mock_provider
-
-        mock_tmux.create_window = AsyncMock(
-            return_value=(True, "Created window 'test'", "test", "@5")
-        )
         mock_sm.get_window_for_thread.return_value = None
-        mock_sm.wait_for_session_map_entry = AsyncMock()
-        mock_sm.resolve_chat_id.return_value = 123
+        mock_tmux.create_window = AsyncMock()
 
-        user_data = {
-            "browse_path": "/tmp/test",
-            PENDING_THREAD_ID: 42,
-        }
+        user_data = {"browse_path": "/tmp/test", PENDING_THREAD_ID: 42}
         query = _make_query(data=f"{CB_PROV_SELECT}codex")
         update = _make_update(thread_id=42)
         context = _make_context(user_data)
@@ -178,16 +191,15 @@ class TestHandleProviderSelect:
             query, 100, f"{CB_PROV_SELECT}codex", update, context
         )
 
-        mock_tmux.create_window.assert_called_once_with(
-            "/tmp/test", launch_command="codex"
-        )
-        mock_sm.set_window_provider.assert_called_once_with("@5", "codex")
+        mock_tmux.create_window.assert_not_called()
+        mock_edit.assert_called_once()
+        text = mock_edit.call_args[0][1]
+        assert "Select Session Mode" in text
 
     @pytest.mark.asyncio
     @patch("ccbot.handlers.directory_callbacks.provider_registry")
     async def test_rejects_unknown_provider(self, mock_registry: MagicMock) -> None:
         mock_registry.is_valid.return_value = False
-
         query = _make_query(data=f"{CB_PROV_SELECT}unknown")
         update = _make_update()
         context = _make_context()
@@ -195,89 +207,73 @@ class TestHandleProviderSelect:
         await _handle_provider_select(
             query, 100, f"{CB_PROV_SELECT}unknown", update, context
         )
-
         query.answer.assert_any_call("Unknown provider", show_alert=True)
 
+
+class TestHandleModeSelect:
     @pytest.mark.asyncio
+    @patch("ccbot.providers.resolve_launch_command")
     @patch("ccbot.handlers.directory_callbacks.safe_edit", new_callable=AsyncMock)
     @patch("ccbot.handlers.directory_callbacks.session_manager")
     @patch("ccbot.handlers.directory_callbacks.tmux_manager")
     @patch("ccbot.handlers.directory_callbacks.provider_registry")
-    async def test_sets_window_provider_after_creation(
+    async def test_creates_window_with_yolo_mode(
         self,
         mock_registry: MagicMock,
         mock_tmux: MagicMock,
         mock_sm: MagicMock,
         mock_edit: AsyncMock,
+        mock_resolve_launch: MagicMock,
     ) -> None:
         mock_registry.is_valid.return_value = True
         mock_provider = MagicMock()
-        mock_provider.capabilities.launch_command = "gemini"
+        mock_provider.capabilities.supports_hook = False
         mock_registry.get.return_value = mock_provider
 
+        mock_resolve_launch.return_value = (
+            "codex --dangerously-bypass-approvals-and-sandbox"
+        )
         mock_tmux.create_window = AsyncMock(
-            return_value=(True, "Created window 'proj'", "proj", "@8")
+            return_value=(True, "Created window 'proj'", "proj", "@5")
         )
         mock_sm.get_window_for_thread.return_value = None
-        mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_sm.resolve_chat_id.return_value = 123
+        mock_sm.send_to_window = AsyncMock(return_value=(True, "ok"))
+        mock_sm.get_window_state.return_value = MagicMock()
 
-        user_data = {
-            "browse_path": "/tmp/proj",
-            PENDING_THREAD_ID: 42,
-        }
-        query = _make_query(data=f"{CB_PROV_SELECT}gemini")
+        user_data = {"browse_path": "/tmp/proj", PENDING_THREAD_ID: 42}
+        query = _make_query(data=f"{CB_MODE_SELECT}codex:yolo")
         update = _make_update(thread_id=42)
         context = _make_context(user_data)
 
-        await _handle_provider_select(
-            query, 100, f"{CB_PROV_SELECT}gemini", update, context
+        await _handle_mode_select(
+            query, 100, f"{CB_MODE_SELECT}codex:yolo", update, context
         )
 
-        mock_sm.set_window_provider.assert_called_once_with("@8", "gemini")
+        mock_resolve_launch.assert_called_once_with("codex", approval_mode="yolo")
+        mock_tmux.create_window.assert_called_once_with(
+            "/tmp/proj",
+            launch_command="codex --dangerously-bypass-approvals-and-sandbox",
+        )
+        mock_sm.set_window_provider.assert_called_once_with("@5", "codex")
+        mock_sm.set_window_approval_mode.assert_called_once_with("@5", "yolo")
 
     @pytest.mark.asyncio
-    @patch("ccbot.handlers.directory_callbacks.safe_edit", new_callable=AsyncMock)
-    @patch("ccbot.handlers.directory_callbacks.session_manager")
-    @patch("ccbot.handlers.directory_callbacks.tmux_manager")
     @patch("ccbot.handlers.directory_callbacks.provider_registry")
-    async def test_handles_create_failure(
-        self,
-        mock_registry: MagicMock,
-        mock_tmux: MagicMock,
-        mock_sm: MagicMock,
-        mock_edit: AsyncMock,
-    ) -> None:
+    async def test_rejects_unknown_mode(self, mock_registry: MagicMock) -> None:
         mock_registry.is_valid.return_value = True
-        mock_provider = MagicMock()
-        mock_provider.capabilities.launch_command = "claude"
-        mock_registry.get.return_value = mock_provider
+        query = _make_query(data=f"{CB_MODE_SELECT}codex:unknown")
+        update = _make_update()
+        context = _make_context()
 
-        mock_tmux.create_window = AsyncMock(
-            return_value=(False, "Failed to create", "", "")
+        await _handle_mode_select(
+            query, 100, f"{CB_MODE_SELECT}codex:unknown", update, context
         )
-        mock_sm.get_window_for_thread.return_value = None
-
-        user_data = {
-            "browse_path": "/tmp/test",
-            PENDING_THREAD_ID: 42,
-        }
-        query = _make_query(data=f"{CB_PROV_SELECT}claude")
-        update = _make_update(thread_id=42)
-        context = _make_context(user_data)
-
-        await _handle_provider_select(
-            query, 100, f"{CB_PROV_SELECT}claude", update, context
-        )
-
-        mock_edit.assert_called_once()
-        text = mock_edit.call_args[0][1]
-        assert "Failed to create" in text
-        mock_sm.set_window_provider.assert_not_called()
+        query.answer.assert_any_call("Unknown mode", show_alert=True)
 
     @pytest.mark.asyncio
+    @patch("ccbot.providers.resolve_launch_command")
     @patch("ccbot.handlers.directory_callbacks.safe_edit", new_callable=AsyncMock)
-    @patch("ccbot.handlers.directory_callbacks.safe_send", new_callable=AsyncMock)
     @patch("ccbot.handlers.directory_callbacks.session_manager")
     @patch("ccbot.handlers.directory_callbacks.tmux_manager")
     @patch("ccbot.handlers.directory_callbacks.provider_registry")
@@ -286,33 +282,34 @@ class TestHandleProviderSelect:
         mock_registry: MagicMock,
         mock_tmux: MagicMock,
         mock_sm: MagicMock,
-        mock_send: AsyncMock,
         mock_edit: AsyncMock,
+        mock_resolve_launch: MagicMock,
     ) -> None:
         mock_registry.is_valid.return_value = True
         mock_provider = MagicMock()
-        mock_provider.capabilities.launch_command = "claude"
+        mock_provider.capabilities.supports_hook = False
         mock_registry.get.return_value = mock_provider
 
+        mock_resolve_launch.return_value = "claude"
         mock_tmux.create_window = AsyncMock(
             return_value=(True, "Created window 'proj'", "proj", "@1")
         )
         mock_sm.get_window_for_thread.return_value = None
-        mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_sm.resolve_chat_id.return_value = 123
         mock_sm.send_to_window = AsyncMock(return_value=(True, "ok"))
+        mock_sm.get_window_state.return_value = MagicMock()
 
         user_data = {
             "browse_path": "/tmp/proj",
             PENDING_THREAD_ID: 42,
             PENDING_THREAD_TEXT: "hello world",
         }
-        query = _make_query(data=f"{CB_PROV_SELECT}claude")
+        query = _make_query(data=f"{CB_MODE_SELECT}claude:normal")
         update = _make_update(thread_id=42)
         context = _make_context(user_data)
 
-        await _handle_provider_select(
-            query, 100, f"{CB_PROV_SELECT}claude", update, context
+        await _handle_mode_select(
+            query, 100, f"{CB_MODE_SELECT}claude:normal", update, context
         )
 
         mock_sm.send_to_window.assert_called_once_with("@1", "hello world")

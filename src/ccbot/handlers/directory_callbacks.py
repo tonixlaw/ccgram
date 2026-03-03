@@ -5,7 +5,8 @@ Handles all inline keyboard callbacks for the directory browser UI:
   - CB_DIR_UP: Navigate to parent directory
   - CB_DIR_PAGE: Paginate directory listing
   - CB_DIR_CONFIRM: Confirm directory selection, show provider picker
-  - CB_PROV_SELECT: Select provider and create tmux window
+  - CB_PROV_SELECT: Select provider, then show launch mode picker
+  - CB_MODE_SELECT: Select launch mode and create tmux window
   - CB_DIR_CANCEL: Cancel directory browsing
   - CB_DIR_FAV: Select a favorite directory
   - CB_DIR_STAR: Star/unstar a directory
@@ -31,6 +32,7 @@ from .callback_data import (
     CB_DIR_SELECT,
     CB_DIR_STAR,
     CB_DIR_UP,
+    CB_MODE_SELECT,
     CB_PROV_SELECT,
 )
 from .callback_helpers import get_thread_id
@@ -39,11 +41,13 @@ from .directory_browser import (
     BROWSE_PAGE_KEY,
     BROWSE_PATH_KEY,
     build_directory_browser,
+    build_mode_picker,
     build_provider_picker,
     clear_browse_state,
     get_favorites,
 )
 from .message_sender import safe_edit, safe_send
+from .topic_emoji import format_topic_name_for_mode
 from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT
 
 logger = structlog.get_logger()
@@ -74,6 +78,8 @@ async def handle_directory_callback(
         await _handle_confirm(query, user_id, update, context)
     elif data.startswith(CB_PROV_SELECT):
         await _handle_provider_select(query, user_id, data, update, context)
+    elif data.startswith(CB_MODE_SELECT):
+        await _handle_mode_select(query, user_id, data, update, context)
     elif data == CB_DIR_CANCEL:
         await _handle_cancel(query, update, context)
 
@@ -382,7 +388,7 @@ async def _handle_provider_select(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_PROV_SELECT: select provider and create tmux window."""
+    """Handle CB_PROV_SELECT: select provider and show mode picker."""
     provider_name = data[len(CB_PROV_SELECT) :]
     if not provider_registry.is_valid(provider_name):
         await query.answer("Unknown provider", show_alert=True)
@@ -398,7 +404,56 @@ async def _handle_provider_select(
         context.user_data.get(PENDING_THREAD_ID) if context.user_data else None
     )
 
-    # Clear browse state now that we've read the path
+    if not await _validate_provider_select(
+        query, user_id, update, context, pending_thread_id
+    ):
+        return
+
+    text, keyboard = build_mode_picker(selected_path, provider_name)
+    await safe_edit(query, text, reply_markup=keyboard)
+
+
+def _parse_mode_select(data: str) -> tuple[str, str] | None:
+    """Parse mode callback data as (provider_name, approval_mode)."""
+    raw = data[len(CB_MODE_SELECT) :]
+    provider_name, sep, approval_mode = raw.partition(":")
+    if not sep:
+        return None
+    return provider_name, approval_mode.lower()
+
+
+async def _handle_mode_select(
+    query: CallbackQuery,
+    user_id: int,
+    data: str,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Handle CB_MODE_SELECT: select launch mode and create tmux window."""
+    parsed = _parse_mode_select(data)
+    if parsed is None:
+        await query.answer("Invalid mode", show_alert=True)
+        return
+
+    provider_name, approval_mode = parsed
+    if not provider_registry.is_valid(provider_name):
+        await query.answer("Unknown provider", show_alert=True)
+        return
+    if approval_mode not in ("normal", "yolo"):
+        await query.answer("Unknown mode", show_alert=True)
+        return
+
+    default_path = str(Path.cwd())
+    selected_path = (
+        context.user_data.get(BROWSE_PATH_KEY, default_path)
+        if context.user_data
+        else default_path
+    )
+    pending_thread_id: int | None = (
+        context.user_data.get(PENDING_THREAD_ID) if context.user_data else None
+    )
+
+    # Clear browse state now that mode is selected.
     clear_browse_state(context.user_data)
 
     if not await _validate_provider_select(
@@ -406,89 +461,88 @@ async def _handle_provider_select(
     ):
         return
 
-    # Resolve launch command (env override > provider default)
+    # Resolve launch command (env override > provider default), with mode.
     from ccbot.providers import resolve_launch_command
 
-    launch_command = resolve_launch_command(provider_name)
+    launch_command = resolve_launch_command(provider_name, approval_mode=approval_mode)
 
     success, message, created_wname, created_wid = await tmux_manager.create_window(
         selected_path, launch_command=launch_command
     )
-    if success:
-        session_manager.update_user_mru(user_id, selected_path)
-        # Set cwd before set_window_provider so it's included in the save.
-        # Recovery needs cwd for hookless providers (codex/gemini) that never
-        # write session_map.json. For Claude, the hook overwrites via
-        # load_session_map — harmless duplication.
-        window_state = session_manager.get_window_state(created_wid)
-        window_state.cwd = selected_path
-        session_manager.set_window_provider(created_wid, provider_name)
-        logger.info(
-            "Window created: %s (id=%s) at %s provider=%s (user=%d, thread=%s)",
-            created_wname,
-            created_wid,
-            selected_path,
-            provider_name,
-            user_id,
-            pending_thread_id,
-        )
-        if provider_registry.get(provider_name).capabilities.supports_hook:
-            await session_manager.wait_for_session_map_entry(created_wid)
-
-        if pending_thread_id is not None:
-            session_manager.bind_thread(
-                user_id, pending_thread_id, created_wid, window_name=created_wname
-            )
-
-            try:
-                await context.bot.edit_forum_topic(
-                    chat_id=session_manager.resolve_chat_id(user_id, pending_thread_id),
-                    message_thread_id=pending_thread_id,
-                    name=created_wname,
-                )
-            except TelegramError as e:
-                logger.debug("Failed to rename topic: %s", e)
-
-            await safe_edit(
-                query,
-                f"✅ {message}\n\nBound to this topic. Send messages here.",
-            )
-
-            pending_text = (
-                context.user_data.get(PENDING_THREAD_TEXT)
-                if context.user_data
-                else None
-            )
-            if pending_text:
-                logger.debug(
-                    "Forwarding pending text to window %s (len=%d)",
-                    created_wname,
-                    len(pending_text),
-                )
-                if context.user_data is not None:
-                    context.user_data.pop(PENDING_THREAD_TEXT, None)
-                    context.user_data.pop(PENDING_THREAD_ID, None)
-                send_ok, send_msg = await session_manager.send_to_window(
-                    created_wid,
-                    pending_text,
-                )
-                if not send_ok:
-                    logger.warning("Failed to forward pending text: %s", send_msg)
-                    await safe_send(
-                        context.bot,
-                        session_manager.resolve_chat_id(user_id, pending_thread_id),
-                        f"❌ Failed to send pending message: {send_msg}",
-                        message_thread_id=pending_thread_id,
-                    )
-            elif context.user_data is not None:
-                context.user_data.pop(PENDING_THREAD_ID, None)
-        else:
-            await safe_edit(query, f"✅ {message}")
-    else:
+    if not success:
         await safe_edit(query, f"❌ {message}")
         if pending_thread_id is not None and context.user_data is not None:
             context.user_data.pop(PENDING_THREAD_ID, None)
             context.user_data.pop(PENDING_THREAD_TEXT, None)
+        return
+
+    session_manager.update_user_mru(user_id, selected_path)
+    # Set cwd before provider/mode save so state snapshots stay coherent.
+    window_state = session_manager.get_window_state(created_wid)
+    window_state.cwd = selected_path
+    session_manager.set_window_provider(created_wid, provider_name)
+    session_manager.set_window_approval_mode(created_wid, approval_mode)
+    logger.info(
+        "Window created: %s (id=%s) at %s provider=%s mode=%s (user=%d, thread=%s)",
+        created_wname,
+        created_wid,
+        selected_path,
+        provider_name,
+        approval_mode,
+        user_id,
+        pending_thread_id,
+    )
+    if provider_registry.get(provider_name).capabilities.supports_hook:
+        await session_manager.wait_for_session_map_entry(created_wid)
+
+    if pending_thread_id is None:
+        await safe_edit(query, f"✅ {message}")
+        return
+
+    session_manager.bind_thread(
+        user_id, pending_thread_id, created_wid, window_name=created_wname
+    )
+
+    try:
+        await context.bot.edit_forum_topic(
+            chat_id=session_manager.resolve_chat_id(user_id, pending_thread_id),
+            message_thread_id=pending_thread_id,
+            name=format_topic_name_for_mode(created_wname, approval_mode),
+        )
+    except TelegramError as e:
+        logger.debug("Failed to rename topic: %s", e)
+
+    await safe_edit(
+        query,
+        f"✅ {message}\n\nBound to this topic. Send messages here.",
+    )
+
+    pending_text = (
+        context.user_data.get(PENDING_THREAD_TEXT) if context.user_data else None
+    )
+    if pending_text:
+        logger.debug(
+            "Forwarding pending text to window %s (len=%d)",
+            created_wname,
+            len(pending_text),
+        )
+        if context.user_data is not None:
+            context.user_data.pop(PENDING_THREAD_TEXT, None)
+            context.user_data.pop(PENDING_THREAD_ID, None)
+        send_ok, send_msg = await session_manager.send_to_window(
+            created_wid,
+            pending_text,
+        )
+        if not send_ok:
+            logger.warning("Failed to forward pending text: %s", send_msg)
+            await safe_send(
+                context.bot,
+                session_manager.resolve_chat_id(user_id, pending_thread_id),
+                f"❌ Failed to send pending message: {send_msg}",
+                message_thread_id=pending_thread_id,
+            )
+    elif context.user_data is not None:
+        context.user_data.pop(PENDING_THREAD_ID, None)
 
 
 async def _handle_cancel(

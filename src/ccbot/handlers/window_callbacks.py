@@ -30,6 +30,7 @@ from .directory_browser import (
     clear_window_picker_state,
 )
 from .message_sender import safe_edit, safe_send
+from .topic_emoji import format_topic_name_for_mode
 from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT
 
 logger = structlog.get_logger()
@@ -101,7 +102,9 @@ async def _handle_bind(
         await context.bot.edit_forum_topic(
             chat_id=session_manager.resolve_chat_id(user_id, thread_id),
             message_thread_id=thread_id,
-            name=display,
+            name=format_topic_name_for_mode(
+                display, session_manager.get_approval_mode(selected_wid)
+            ),
         )
     except TelegramError as e:
         logger.debug("Failed to rename topic: %s", e)

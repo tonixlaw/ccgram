@@ -13,7 +13,9 @@ from ccbot.handlers.topic_emoji import (
     EMOJI_DEAD,
     EMOJI_DONE,
     EMOJI_IDLE,
+    EMOJI_YOLO,
     clear_topic_emoji_state,
+    format_topic_name_for_mode,
     reset_all_state,
     strip_emoji_prefix,
     update_topic_emoji,
@@ -44,6 +46,14 @@ class TestStripEmojiPrefix:
     def test_double_prefix_strips_once(self) -> None:
         result = strip_emoji_prefix(f"{EMOJI_ACTIVE} {EMOJI_IDLE} myproject")
         assert result == f"{EMOJI_IDLE} myproject"
+
+    def test_strips_yolo_prefix(self) -> None:
+        assert strip_emoji_prefix(f"{EMOJI_YOLO} myproject") == "myproject"
+
+    def test_strips_state_and_yolo_prefix(self) -> None:
+        assert (
+            strip_emoji_prefix(f"{EMOJI_ACTIVE} {EMOJI_YOLO} myproject") == "myproject"
+        )
 
 
 _PATCH_MONOTONIC = "ccbot.handlers.topic_emoji.time.monotonic"
@@ -179,6 +189,28 @@ class TestUpdateTopicEmoji:
             mock_monotonic.return_value = DEBOUNCE_SECONDS - 0.1
             await update_topic_emoji(bot, -100, 42, "active", "myproject")
         bot.edit_forum_topic.assert_not_called()
+
+    async def test_yolo_mode_adds_rocket_badge(self) -> None:
+        bot = AsyncMock()
+        with patch(
+            "ccbot.handlers.topic_emoji._resolve_approval_mode", return_value="yolo"
+        ):
+            await _debounced_update(bot, -100, 42, "active", "myproject")
+        bot.edit_forum_topic.assert_called_once_with(
+            chat_id=-100,
+            message_thread_id=42,
+            name=f"{EMOJI_ACTIVE} {EMOJI_YOLO} myproject",
+        )
+
+
+class TestFormatTopicNameForMode:
+    def test_formats_yolo_name(self) -> None:
+        assert (
+            format_topic_name_for_mode("myproject", "yolo") == f"{EMOJI_YOLO} myproject"
+        )
+
+    def test_formats_normal_name(self) -> None:
+        assert format_topic_name_for_mode("myproject", "normal") == "myproject"
 
 
 class TestTopicNamePreservation:

@@ -28,6 +28,7 @@ from .callback_data import (
     CB_DIR_STAR,
     CB_DIR_UP,
     CB_PROV_SELECT,
+    CB_MODE_SELECT,
     CB_WIN_BIND,
     CB_WIN_CANCEL,
     CB_WIN_NEW,
@@ -279,4 +280,39 @@ def build_provider_picker(selected_path: str) -> tuple[str, InlineKeyboardMarkup
             ]
         )
     buttons.append([InlineKeyboardButton("Cancel", callback_data=CB_DIR_CANCEL)])
+    return text, InlineKeyboardMarkup(buttons)
+
+
+def build_mode_picker(
+    selected_path: str, provider_name: str
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Build launch-mode keyboard shown after provider selection.
+
+    Returns: (text, keyboard).
+    """
+    display_path = selected_path.replace(str(Path.home()), "~")
+    provider_label, provider_icon = _PROVIDER_META.get(
+        provider_name, (provider_name.title(), "🤖")
+    )
+    text = (
+        "*Select Session Mode*\n\n"
+        f"Directory: `{display_path}`\n"
+        f"Provider: {provider_icon} {provider_label}\n\n"
+        "Choose how many approvals you want for this session."
+    )
+    buttons = [
+        [
+            InlineKeyboardButton(
+                "✅ Standard",
+                callback_data=f"{CB_MODE_SELECT}{provider_name}:normal",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🚀 YOLO",
+                callback_data=f"{CB_MODE_SELECT}{provider_name}:yolo",
+            )
+        ],
+        [InlineKeyboardButton("Cancel", callback_data=CB_DIR_CANCEL)],
+    ]
     return text, InlineKeyboardMarkup(buttons)

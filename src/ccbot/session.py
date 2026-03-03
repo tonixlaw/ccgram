@@ -41,6 +41,10 @@ from .window_resolver import is_window_id
 
 logger = structlog.get_logger()
 
+APPROVAL_MODES: frozenset[str] = frozenset({"normal", "yolo"})
+DEFAULT_APPROVAL_MODE = "normal"
+YOLO_APPROVAL_MODE = "yolo"
+
 
 def parse_session_map(raw: dict[str, Any], prefix: str) -> dict[str, dict[str, str]]:
     """Parse session_map.json entries matching a tmux session prefix.
@@ -76,6 +80,7 @@ class WindowState:
         window_name: Display name of the window
         transcript_path: Direct path to JSONL transcript file (from hook payload)
         notification_mode: "all" | "errors_only" | "muted"
+        approval_mode: "normal" | "yolo"
     """
 
     session_id: str = ""
@@ -84,6 +89,7 @@ class WindowState:
     transcript_path: str = ""
     notification_mode: str = "all"
     provider_name: str = ""
+    approval_mode: str = DEFAULT_APPROVAL_MODE
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -98,6 +104,8 @@ class WindowState:
             d["notification_mode"] = self.notification_mode
         if self.provider_name:
             d["provider_name"] = self.provider_name
+        if self.approval_mode != DEFAULT_APPROVAL_MODE:
+            d["approval_mode"] = self.approval_mode
         return d
 
     @classmethod
@@ -109,6 +117,7 @@ class WindowState:
             transcript_path=data.get("transcript_path", ""),
             notification_mode=data.get("notification_mode", "all"),
             provider_name=data.get("provider_name", ""),
+            approval_mode=data.get("approval_mode", DEFAULT_APPROVAL_MODE),
         )
 
 
@@ -905,6 +914,33 @@ class SessionManager:
         state = self.get_window_state(window_id)
         state.provider_name = provider_name
         self._save_state()
+
+    def get_approval_mode(self, window_id: str) -> str:
+        """Get approval mode for a window (default: 'normal')."""
+        state = self.window_states.get(window_id)
+        mode = state.approval_mode if state else DEFAULT_APPROVAL_MODE
+        return mode if mode in APPROVAL_MODES else DEFAULT_APPROVAL_MODE
+
+    def set_window_approval_mode(self, window_id: str, mode: str) -> None:
+        """Set approval mode for a window."""
+        normalized = mode.lower()
+        if normalized not in APPROVAL_MODES:
+            raise ValueError(f"Invalid approval mode: {mode!r}")
+        state = self.get_window_state(window_id)
+        state.approval_mode = normalized
+        self._save_state()
+
+    def get_window_for_chat_thread(self, chat_id: int, thread_id: int) -> str | None:
+        """Resolve window_id for a specific Telegram chat/thread pair."""
+        for user_id, bindings in self.thread_bindings.items():
+            window_id = bindings.get(thread_id)
+            if not window_id:
+                continue
+            key = f"{user_id}:{thread_id}"
+            resolved_chat = self.group_chat_ids.get(key, user_id)
+            if resolved_chat == chat_id:
+                return window_id
+        return None
 
     # --- Notification mode ---
 

@@ -152,6 +152,20 @@ class TestBuildDashboard:
         text, _kb = await _build_dashboard(100)
         assert "[" not in text
 
+    async def test_yolo_mode_shows_tag(self, _patch_deps) -> None:
+        mock_sm, mock_tm, _ = _patch_deps
+        mock_sm.get_all_thread_windows.return_value = {42: "@0"}
+        mock_sm.get_display_name.side_effect = lambda wid: "myproject"
+        mock_sm.get_window_state.side_effect = lambda wid: WindowState(
+            cwd="/home/user/myproject",
+            provider_name="codex",
+            approval_mode="yolo",
+        )
+        mock_tm.list_windows = AsyncMock(return_value=[MagicMock(window_id="@0")])
+
+        text, _kb = await _build_dashboard(100)
+        assert "[YOLO]" in text
+
     async def test_dead_session_no_action_buttons(self, _patch_deps) -> None:
         mock_sm, mock_tm, _ = _patch_deps
         mock_sm.get_all_thread_windows.return_value = {42: "@0"}

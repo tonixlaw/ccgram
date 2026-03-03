@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from ccbot.session import SessionManager, WindowState
+from ccbot.session import APPROVAL_MODES, SessionManager, WindowState
 
 
 @pytest.fixture
@@ -66,8 +66,10 @@ class TestWindowState:
     def test_clear_window_session(self, mgr: SessionManager) -> None:
         state = mgr.get_window_state("@1")
         state.session_id = "abc"
+        state.approval_mode = "yolo"
         mgr.clear_window_session("@1")
         assert mgr.get_window_state("@1").session_id == ""
+        assert mgr.get_window_state("@1").approval_mode == "yolo"
 
 
 class TestResolveWindowForThread:
@@ -389,6 +391,32 @@ class TestWindowStateProviderName:
         assert restored.session_id == "s1"
 
 
+class TestWindowStateApprovalMode:
+    def test_default_approval_mode_is_normal(self) -> None:
+        ws = WindowState()
+        assert ws.approval_mode == "normal"
+
+    def test_to_dict_omits_default_mode(self) -> None:
+        ws = WindowState(session_id="s1", cwd="/tmp")
+        d = ws.to_dict()
+        assert "approval_mode" not in d
+
+    def test_to_dict_includes_non_default_mode(self) -> None:
+        ws = WindowState(session_id="s1", cwd="/tmp", approval_mode="yolo")
+        d = ws.to_dict()
+        assert d["approval_mode"] == "yolo"
+
+    def test_from_dict_defaults_to_normal(self) -> None:
+        ws = WindowState.from_dict({"session_id": "s1", "cwd": "/tmp"})
+        assert ws.approval_mode == "normal"
+
+    def test_from_dict_reads_mode(self) -> None:
+        ws = WindowState.from_dict(
+            {"session_id": "s1", "cwd": "/tmp", "approval_mode": "yolo"}
+        )
+        assert ws.approval_mode == "yolo"
+
+
 class TestGlobFallbackCwdUpdate:
     @pytest.fixture(autouse=True)
     def _mock_provider(self, monkeypatch):
@@ -490,6 +518,35 @@ class TestSetWindowProvider:
         mgr.set_window_provider("@5", "gemini")
         assert "@5" in mgr.window_states
         assert mgr.window_states["@5"].provider_name == "gemini"
+
+
+class TestApprovalMode:
+    def test_approval_modes_is_frozenset(self) -> None:
+        assert isinstance(APPROVAL_MODES, frozenset)
+        assert {"normal", "yolo"} == APPROVAL_MODES
+
+    def test_default_is_normal(self, mgr: SessionManager) -> None:
+        assert mgr.get_approval_mode("@missing") == "normal"
+
+    def test_set_and_get(self, mgr: SessionManager) -> None:
+        mgr.set_window_approval_mode("@1", "yolo")
+        assert mgr.get_approval_mode("@1") == "yolo"
+
+    def test_invalid_mode_raises(self, mgr: SessionManager) -> None:
+        with pytest.raises(ValueError, match="Invalid approval mode"):
+            mgr.set_window_approval_mode("@1", "invalid")
+
+
+class TestGetWindowForChatThread:
+    def test_resolves_bound_window_for_group_topic(self, mgr: SessionManager) -> None:
+        mgr.bind_thread(100, 42, "@9")
+        mgr.set_group_chat_id(100, 42, -100123)
+        assert mgr.get_window_for_chat_thread(-100123, 42) == "@9"
+
+    def test_returns_none_when_chat_mismatch(self, mgr: SessionManager) -> None:
+        mgr.bind_thread(100, 42, "@9")
+        mgr.set_group_chat_id(100, 42, -100123)
+        assert mgr.get_window_for_chat_thread(-100999, 42) is None
 
 
 class TestSyncDisplayNames:

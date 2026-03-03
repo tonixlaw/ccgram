@@ -28,14 +28,15 @@ EMOJI_ACTIVE = "\U0001f7e2"  # Green circle
 EMOJI_IDLE = "\U0001f4a4"  # Zzz / sleeping
 EMOJI_DONE = "\u2705"  # Check mark (Claude exited normally)
 EMOJI_DEAD = "\u274c"  # Cross mark
+EMOJI_YOLO = "\U0001f680"  # Rocket (positive YOLO indicator)
 _EMOJI_DEAD_OLD = "\u26ab"  # Legacy dead emoji (black circle, pre-2026-02)
 
 # Debounce: state must be stable for this many seconds before updating topic name.
 # Prevents rapid active↔idle toggling from flooding chat with rename messages.
 DEBOUNCE_SECONDS = 5.0
 
-# Topic state tracking: (chat_id, thread_id) -> current_state
-_topic_states: dict[tuple[int, int], str] = {}
+# Topic state tracking: (chat_id, thread_id) -> (state, approval_mode)
+_topic_states: dict[tuple[int, int], tuple[str, str]] = {}
 
 # Pending transitions: (chat_id, thread_id) -> (desired_state, first_seen_monotonic)
 _pending_transitions: dict[tuple[int, int], tuple[str, float]] = {}
@@ -60,6 +61,24 @@ def _resolve_topic_name(key: tuple[int, int], display_name: str) -> str:
     clean = strip_emoji_prefix(display_name)
     _topic_names[key] = clean
     return clean
+
+
+def _resolve_approval_mode(chat_id: int, thread_id: int) -> str:
+    """Resolve approval mode for a topic via session bindings."""
+    from ..session import DEFAULT_APPROVAL_MODE, session_manager
+
+    window_id = session_manager.get_window_for_chat_thread(chat_id, thread_id)
+    if not window_id:
+        return DEFAULT_APPROVAL_MODE
+    return session_manager.get_approval_mode(window_id)
+
+
+def format_topic_name_for_mode(display_name: str, approval_mode: str) -> str:
+    """Format a topic display name with a positive mode badge."""
+    clean_name = strip_emoji_prefix(display_name)
+    if approval_mode == "yolo":
+        return f"{EMOJI_YOLO} {clean_name}"
+    return clean_name
 
 
 async def update_topic_emoji(
@@ -87,8 +106,11 @@ async def update_topic_emoji(
 
     key = (chat_id, thread_id)
 
-    # Already in this state — no transition needed
-    if _topic_states.get(key) == state:
+    approval_mode = _resolve_approval_mode(chat_id, thread_id)
+    state_token = (state, approval_mode)
+
+    # Already in this state/mode — no transition needed
+    if _topic_states.get(key) == state_token:
         _pending_transitions.pop(key, None)
         return
 
@@ -118,7 +140,8 @@ async def update_topic_emoji(
     _pending_transitions.pop(key, None)
 
     clean_name = _resolve_topic_name(key, display_name)
-    new_name = f"{emoji} {clean_name}"
+    mode_prefix = f"{EMOJI_YOLO} " if approval_mode == "yolo" else ""
+    new_name = f"{emoji} {mode_prefix}{clean_name}"
 
     try:
         await bot.edit_forum_topic(
@@ -126,7 +149,7 @@ async def update_topic_emoji(
             message_thread_id=thread_id,
             name=new_name,
         )
-        _topic_states[key] = state
+        _topic_states[key] = state_token
         logger.debug(
             "Updated topic emoji: chat=%d thread=%d state=%s name='%s'",
             chat_id,
@@ -145,7 +168,7 @@ async def update_topic_emoji(
             "topic_not_modified" in e.message.lower() or "Topic_id_invalid" in e.message
         ):
             # Expected no-ops: already correct name or invalid topic
-            _topic_states[key] = state
+            _topic_states[key] = state_token
         else:
             logger.debug("Failed to update topic emoji: %s", e)
     except TelegramError:
@@ -157,7 +180,11 @@ def strip_emoji_prefix(name: str) -> str:
     for emoji in (EMOJI_ACTIVE, EMOJI_IDLE, EMOJI_DONE, EMOJI_DEAD, _EMOJI_DEAD_OLD):
         prefix = f"{emoji} "
         if name.startswith(prefix):
-            return name[len(prefix) :]
+            name = name[len(prefix) :]
+            break
+    yolo_prefix = f"{EMOJI_YOLO} "
+    if name.startswith(yolo_prefix):
+        return name[len(yolo_prefix) :]
     return name
 
 

@@ -134,6 +134,30 @@ class TestResolveLaunchCommand:
         assert resolve_launch_command("codex") == "my-codex --flag"
         assert resolve_launch_command("gemini") == "/opt/gemini/run"
 
+    def test_yolo_mode_appends_provider_specific_flags(self) -> None:
+        from ccbot.providers import resolve_launch_command
+
+        assert (
+            resolve_launch_command("claude", approval_mode="yolo")
+            == "claude --dangerously-skip-permissions"
+        )
+        assert (
+            resolve_launch_command("codex", approval_mode="yolo")
+            == "codex --dangerously-bypass-approvals-and-sandbox"
+        )
+        assert resolve_launch_command("gemini", approval_mode="yolo") == "gemini --yolo"
+
+    def test_yolo_mode_does_not_duplicate_flag(self, monkeypatch) -> None:
+        from ccbot.providers import resolve_launch_command
+
+        monkeypatch.setenv(
+            "CCBOT_CLAUDE_COMMAND", "claude --dangerously-skip-permissions"
+        )
+        assert (
+            resolve_launch_command("claude", approval_mode="yolo")
+            == "claude --dangerously-skip-permissions"
+        )
+
 
 # ── Integration: registry wired together ─────────────────────────────────
 

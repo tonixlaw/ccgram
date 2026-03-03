@@ -24,6 +24,15 @@ from ccbot.providers.registry import ProviderRegistry, UnknownProviderError, reg
 
 logger = structlog.get_logger()
 
+# Launch-mode constants for per-session approval behavior.
+_APPROVAL_MODE_NORMAL = "normal"
+_APPROVAL_MODE_YOLO = "yolo"
+_YOLO_FLAGS: dict[str, str] = {
+    "claude": "--dangerously-skip-permissions",
+    "codex": "--dangerously-bypass-approvals-and-sandbox",
+    "gemini": "--yolo",
+}
+
 # Singleton cache
 _active: AgentProvider | None = None
 
@@ -115,20 +124,35 @@ def detect_provider_from_command(pane_current_command: str) -> str:
     return ""
 
 
-def resolve_launch_command(provider_name: str) -> str:
-    """Resolve the launch command for a provider, applying env var overrides.
+def resolve_launch_command(
+    provider_name: str, *, approval_mode: str = _APPROVAL_MODE_NORMAL
+) -> str:
+    """Resolve launch command for a provider, with optional approval mode.
 
     Resolution: ``CCBOT_<NAME>_COMMAND`` (e.g. ``CCBOT_CLAUDE_COMMAND``) if set,
     otherwise the provider's hardcoded default (``capabilities.launch_command``).
+    When ``approval_mode`` is ``"yolo"``, appends the provider-specific
+    permissive-mode flag unless it is already present.
     """
     _ensure_registered()
-    override = os.environ.get(f"CCBOT_{provider_name.upper()}_COMMAND")
+    provider = provider_name.lower()
+    override = os.environ.get(f"CCBOT_{provider.upper()}_COMMAND")
     if override:
-        return override
-    try:
-        return registry.get(provider_name).capabilities.launch_command
-    except UnknownProviderError:
-        return registry.get("claude").capabilities.launch_command
+        command = override
+    else:
+        try:
+            command = registry.get(provider).capabilities.launch_command
+        except UnknownProviderError:
+            provider = "claude"
+            command = registry.get("claude").capabilities.launch_command
+
+    if approval_mode.lower() != _APPROVAL_MODE_YOLO:
+        return command
+
+    yolo_flag = _YOLO_FLAGS.get(provider)
+    if not yolo_flag or yolo_flag in command:
+        return command
+    return f"{command} {yolo_flag}"
 
 
 def resolve_capabilities(provider_name: str | None = None) -> ProviderCapabilities:

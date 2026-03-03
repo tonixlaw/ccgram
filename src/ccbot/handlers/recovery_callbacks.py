@@ -35,6 +35,7 @@ from .callback_data import (
 )
 from .callback_helpers import get_thread_id
 from .message_sender import safe_edit, safe_send
+from .topic_emoji import format_topic_name_for_mode
 from .user_state import (
     PENDING_THREAD_ID,
     PENDING_THREAD_TEXT,
@@ -351,7 +352,12 @@ async def _create_and_bind_window(
     provider = (
         get_provider_for_window(old_window_id) if old_window_id else get_provider()
     )
-    launch_command = resolve_launch_command(provider.capabilities.name)
+    approval_mode = (
+        session_manager.get_approval_mode(old_window_id) if old_window_id else "normal"
+    )
+    launch_command = resolve_launch_command(
+        provider.capabilities.name, approval_mode=approval_mode
+    )
 
     success, message, created_wname, created_wid = await tmux_manager.create_window(
         cwd, agent_args=agent_args, launch_command=launch_command
@@ -368,6 +374,7 @@ async def _create_and_bind_window(
 
     # Propagate provider to new window
     session_manager.set_window_provider(created_wid, provider.capabilities.name)
+    session_manager.set_window_approval_mode(created_wid, approval_mode)
 
     session_manager.bind_thread(
         user_id, thread_id, created_wid, window_name=created_wname
@@ -377,7 +384,7 @@ async def _create_and_bind_window(
         await context.bot.edit_forum_topic(
             chat_id=session_manager.resolve_chat_id(user_id, thread_id),
             message_thread_id=thread_id,
-            name=created_wname,
+            name=format_topic_name_for_mode(created_wname, approval_mode),
         )
     except TelegramError as e:
         logger.debug("Failed to rename topic: %s", e)

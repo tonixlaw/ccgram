@@ -85,6 +85,7 @@ NOTIFY_MODE_LABELS: dict[str, str] = {
 
 # Provider selection (directory browser flow)
 CB_PROV_SELECT = "prov:"  # prov:<provider_name>
+CB_MODE_SELECT = "mode:"  # mode:<provider_name>:<normal|yolo>
 
 # Pane screenshot (from /panes command)
 CB_PANE_SCREENSHOT = "pn:ss:"  # pn:ss:<window_id>:<pane_id>
