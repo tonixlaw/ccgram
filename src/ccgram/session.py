@@ -500,7 +500,7 @@ class SessionManager:
 
         # Prune dead mailbox directories
         qualified_live: set[str] = set()
-        for wid in live_window_ids:
+        for wid in all_known:
             if is_foreign_window(wid):
                 qualified_live.add(wid)
             else:

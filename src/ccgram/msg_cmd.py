@@ -23,6 +23,8 @@ from .msg_discovery import PeerInfo, list_peers, register_declared
 from .session import WindowState
 from .utils import ccgram_dir, tmux_session_name
 
+_CONTEXT_CACHE: dict[str, str] | None = None
+
 logger = structlog.get_logger()
 
 _RATE_WINDOW_SECONDS = 300  # 5 minutes
@@ -64,6 +66,29 @@ def _get_my_window_id() -> str:
 
     click.echo("Error: could not detect window ID from tmux", err=True)
     sys.exit(1)
+
+
+def _build_message_context(my_id: str) -> dict[str, str]:
+    """Build context dict for outbound messages (window name, branch)."""
+    global _CONTEXT_CACHE  # noqa: PLW0603
+    if _CONTEXT_CACHE is not None:
+        return _CONTEXT_CACHE
+
+    ctx: dict[str, str] = {}
+    bare_id = my_id.rsplit(":", 1)[-1] if ":" in my_id else my_id
+    states = _load_window_states()
+    ws = states.get(bare_id)
+    if ws:
+        if ws.window_name:
+            ctx["window_name"] = ws.window_name
+        if ws.cwd:
+            from .msg_discovery import _detect_branch
+
+            branch = _detect_branch(ws.cwd)
+            if branch:
+                ctx["branch"] = branch
+    _CONTEXT_CACHE = ctx
+    return ctx
 
 
 def _load_window_states() -> dict[str, WindowState]:
@@ -245,6 +270,7 @@ def send_cmd(
         "body": body,
         "msg_type": msg_type,
         "subject": subject,
+        "context": _build_message_context(my_id),
     }
     if ttl is not None:
         kwargs["ttl_minutes"] = ttl
@@ -349,6 +375,14 @@ def broadcast_cmd(
     """Broadcast a message to all matching peers."""
     my_id = _get_my_window_id()
     mailbox = Mailbox(_get_mailbox_dir())
+    rate_limit = _get_msg_rate_limit()
+
+    if not _check_rate_limit(mailbox, my_id, rate_limit):
+        click.echo(
+            f"Error: rate limit exceeded ({rate_limit} messages per 5 min)", err=True
+        )
+        sys.exit(1)
+
     window_states = _load_window_states()
     session = tmux_session_name()
     declared_path = _get_mailbox_dir() / "declared.json"
@@ -373,6 +407,7 @@ def broadcast_cmd(
         body=body,
         subject=subject,
         ttl_minutes=ttl if ttl is not None else None,
+        context=_build_message_context(my_id),
     )
 
     click.echo(f"Broadcast to {len(sent)} recipient(s).")
