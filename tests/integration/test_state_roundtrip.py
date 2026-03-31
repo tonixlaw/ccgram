@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from ccgram.session import SessionManager
+from ccgram.user_preferences import user_preferences
 
 pytestmark = pytest.mark.integration
 
@@ -79,20 +80,20 @@ def make_session_manager(tmp_path, monkeypatch):
             id="group-chat-ids",
         ),
         pytest.param(
-            lambda sm: sm.update_user_window_offset(
+            lambda sm: user_preferences.update_user_window_offset(
                 user_id=1, window_id="@0", offset=12345
             ),
-            lambda sm: sm.get_user_window_offset(1, "@0") == 12345,
+            lambda sm: user_preferences.get_user_window_offset(1, "@0") == 12345,
             id="user-offsets",
         ),
         pytest.param(
             lambda sm: (
-                sm.toggle_user_star(user_id=1, path="/tmp/starred-proj"),
-                sm.update_user_mru(user_id=1, path="/tmp/recent-proj"),
+                user_preferences.toggle_user_star(user_id=1, path="/tmp/starred-proj"),
+                user_preferences.update_user_mru(user_id=1, path="/tmp/recent-proj"),
             ),
             lambda sm: (
-                any("starred-proj" in s for s in sm.get_user_starred(1))
-                and any("recent-proj" in s for s in sm.get_user_mru(1))
+                any("starred-proj" in s for s in user_preferences.get_user_starred(1))
+                and any("recent-proj" in s for s in user_preferences.get_user_mru(1))
             ),
             id="directory-favorites",
         ),

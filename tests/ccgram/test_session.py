@@ -6,6 +6,7 @@ import pytest
 
 from ccgram.session import APPROVAL_MODES, SessionManager, WindowState
 from ccgram.thread_router import thread_router
+from ccgram.user_preferences import user_preferences
 
 
 @pytest.fixture
@@ -870,7 +871,7 @@ class TestAuditState:
         assert orphans[0].fixable
 
     def test_stale_offset(self, mgr: SessionManager) -> None:
-        mgr.user_window_offsets[100] = {"@99": 1234}
+        user_preferences.user_window_offsets[100] = {"@99": 1234}
         result = mgr.audit_state(live_window_ids=set(), live_windows=[])
         stale = [i for i in result.issues if i.category == "stale_offset"]
         assert len(stale) == 1
@@ -922,20 +923,20 @@ class TestAuditState:
 
 class TestPruneStaleOffsets:
     def test_removes_unknown_windows(self, mgr: SessionManager) -> None:
-        mgr.user_window_offsets[100] = {"@1": 100, "@99": 200}
+        user_preferences.user_window_offsets[100] = {"@1": 100, "@99": 200}
         changed = mgr.prune_stale_offsets(known_window_ids={"@1"})
         assert changed
-        assert "@99" not in mgr.user_window_offsets[100]
-        assert "@1" in mgr.user_window_offsets[100]
+        assert "@99" not in user_preferences.user_window_offsets[100]
+        assert "@1" in user_preferences.user_window_offsets[100]
 
     def test_removes_empty_user_entry(self, mgr: SessionManager) -> None:
-        mgr.user_window_offsets[100] = {"@99": 200}
+        user_preferences.user_window_offsets[100] = {"@99": 200}
         changed = mgr.prune_stale_offsets(known_window_ids=set())
         assert changed
-        assert 100 not in mgr.user_window_offsets
+        assert 100 not in user_preferences.user_window_offsets
 
     def test_noop_when_nothing_stale(self, mgr: SessionManager) -> None:
-        mgr.user_window_offsets[100] = {"@1": 100}
+        user_preferences.user_window_offsets[100] = {"@1": 100}
         changed = mgr.prune_stale_offsets(known_window_ids={"@1"})
         assert not changed
 

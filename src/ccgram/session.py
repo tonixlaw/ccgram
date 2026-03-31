@@ -8,7 +8,6 @@ Responsibilities:
   - Persist/load state to ~/.ccgram/state.json.
   - Sync window↔session bindings from session_map.json (written by hook).
   - Resolve window IDs to ClaudeSession objects (JSONL file reading).
-  - Track per-user read offsets for unread-message detection.
   - Delegate thread↔window routing to ThreadRouter.
   - Send keystrokes to tmux windows and retrieve message history.
   - Re-resolve stale window IDs on startup (tmux server restart recovery).
@@ -34,6 +33,7 @@ from .providers import get_provider_for_window
 from .state_persistence import StatePersistence
 from .tmux_manager import tmux_manager
 from .thread_router import thread_router
+from .user_preferences import user_preferences
 from .utils import atomic_write_json
 from .window_resolver import EMDASH_SESSION_PREFIX, is_foreign_window, is_window_id
 
@@ -233,13 +233,12 @@ class SessionManager:
     delegated to ThreadRouter — see thread_router.py.
 
     window_states: window_id -> WindowState (session_id, cwd, window_name)
-    user_window_offsets: user_id -> {window_id -> byte_offset}
+
+    User preferences (starred dirs, MRU, read offsets) are delegated to
+    UserPreferences — see user_preferences.py.
     """
 
     window_states: dict[str, WindowState] = field(default_factory=dict)
-    user_window_offsets: dict[int, dict[str, int]] = field(default_factory=dict)
-    # User directory favorites: user_id -> {"starred": [...], "mru": [...]}
-    user_dir_favorites: dict[int, dict[str, list[str]]] = field(default_factory=dict)
 
     # Delegated persistence (not serialized)
     _persistence: StatePersistence = field(default=None, repr=False, init=False)  # type: ignore[assignment]
@@ -261,19 +260,15 @@ class SessionManager:
         self._persistence = StatePersistence(config.state_file, self._serialize_state)
         thread_router._schedule_save = self._save_state
         thread_router._has_window_state = lambda wid: wid in self.window_states
+        user_preferences._schedule_save = self._save_state
         self._load_state()
 
     def _serialize_state(self) -> dict[str, Any]:
         """Serialize all state to a dict for persistence."""
         result = {
             "window_states": {k: v.to_dict() for k, v in self.window_states.items()},
-            "user_window_offsets": {
-                str(uid): offsets for uid, offsets in self.user_window_offsets.items()
-            },
-            "user_dir_favorites": {
-                str(uid): favs for uid, favs in self.user_dir_favorites.items()
-            },
         }
+        result.update(user_preferences.to_dict())
         result.update(thread_router.to_dict())
         return result
 
@@ -304,13 +299,9 @@ class SessionManager:
             k: WindowState.from_dict(v)
             for k, v in state.get("window_states", {}).items()
         }
-        self.user_window_offsets = {
-            int(uid): offsets
-            for uid, offsets in state.get("user_window_offsets", {}).items()
-        }
-        self.user_dir_favorites = {
-            int(uid): favs for uid, favs in state.get("user_dir_favorites", {}).items()
-        }
+
+        # Load user preferences (starred dirs, MRU, read offsets)
+        user_preferences.from_dict(state)
 
         # Load routing data into ThreadRouter (handles dedup + reverse index)
         thread_router.from_dict(state)
@@ -366,7 +357,7 @@ class SessionManager:
             live,
             self.window_states,
             thread_router.thread_bindings,
-            self.user_window_offsets,
+            user_preferences.user_window_offsets,
             thread_router.window_display_names,
         )
 
@@ -677,7 +668,7 @@ class SessionManager:
 
         # 5. Stale user_window_offsets
         known_wids = live_window_ids | bound_window_ids | set(self.window_states.keys())
-        for uid, offsets in self.user_window_offsets.items():
+        for uid, offsets in user_preferences.user_window_offsets.items():
             for wid in offsets:
                 if wid not in known_wids:
                     issues.append(
@@ -724,22 +715,7 @@ class SessionManager:
 
         Returns True if any changes were made.
         """
-        changed = False
-        empty_users: list[int] = []
-        for uid, offsets in self.user_window_offsets.items():
-            stale = [wid for wid in offsets if wid not in known_window_ids]
-            for wid in stale:
-                logger.info("Pruning stale offset: user %d, window %s", uid, wid)
-                del offsets[wid]
-                changed = True
-            if not offsets:
-                empty_users.append(uid)
-        for uid in empty_users:
-            del self.user_window_offsets[uid]
-            changed = True
-        if changed:
-            self._save_state()
-        return changed
+        return user_preferences.prune_stale_offsets(known_window_ids)
 
     def prune_stale_window_states(self, live_window_ids: set[str]) -> bool:
         """Remove window_states not in session_map, not bound, and not live.
@@ -1165,40 +1141,6 @@ class SessionManager:
         self.set_batch_mode(window_id, new_mode)
         return new_mode
 
-    # --- User directory favorites ---
-
-    def get_user_starred(self, user_id: int) -> list[str]:
-        """Get starred directories for a user."""
-        return list(self.user_dir_favorites.get(user_id, {}).get("starred", []))
-
-    def get_user_mru(self, user_id: int) -> list[str]:
-        """Get MRU directories for a user."""
-        return list(self.user_dir_favorites.get(user_id, {}).get("mru", []))
-
-    def update_user_mru(self, user_id: int, path: str) -> None:
-        """Insert path at front of MRU list, dedupe, cap at 5."""
-        resolved = str(Path(path).resolve())
-        favs = self.user_dir_favorites.setdefault(user_id, {})
-        mru: list[str] = favs.get("mru", [])
-        mru = [resolved] + [p for p in mru if p != resolved]
-        favs["mru"] = mru[:5]
-        self._save_state()
-
-    def toggle_user_star(self, user_id: int, path: str) -> bool:
-        """Toggle a directory in/out of starred list. Returns True if now starred."""
-        resolved = str(Path(path).resolve())
-        favs = self.user_dir_favorites.setdefault(user_id, {})
-        starred: list[str] = favs.get("starred", [])
-        if resolved in starred:
-            starred.remove(resolved)
-            now_starred = False
-        else:
-            starred.append(resolved)
-            now_starred = True
-        favs["starred"] = starred
-        self._save_state()
-        return now_starred
-
     def _build_session_file_path(self, session_id: str, cwd: str) -> Path | None:
         """Build the direct file path for a session from session_id and cwd."""
         if not session_id or not cwd:
@@ -1356,27 +1298,6 @@ class SessionManager:
         state.cwd = ""
         self._save_state()
         return None
-
-    # --- User window offset management ---
-
-    def get_user_window_offset(self, user_id: int, window_id: str) -> int | None:
-        """Get the user's last read offset for a window.
-
-        Returns None if no offset has been recorded (first time).
-        """
-        user_offsets = self.user_window_offsets.get(user_id)
-        if user_offsets is None:
-            return None
-        return user_offsets.get(window_id)
-
-    def update_user_window_offset(
-        self, user_id: int, window_id: str, offset: int
-    ) -> None:
-        """Update the user's last read offset for a window."""
-        if user_id not in self.user_window_offsets:
-            self.user_window_offsets[user_id] = {}
-        self.user_window_offsets[user_id][window_id] = offset
-        self._save_state()
 
     # --- Thread binding management (delegated to thread_router) ---
 

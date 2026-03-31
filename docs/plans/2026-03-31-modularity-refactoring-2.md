@@ -238,25 +238,25 @@ Design doc: `docs/design/user-preferences/design.md`
 
 `SessionManager` owns user directory favorites (starred/MRU) and per-user read offsets — 6 methods used by only 2 consumers (`directory_browser.py`, `directory_callbacks.py`). Extract to standalone class following the `ThreadRouter` pattern.
 
-- [ ] create `src/ccgram/user_preferences.py` with `UserPreferences` class:
+- [x] create `src/ccgram/user_preferences.py` with `UserPreferences` class:
   - Data: `_user_dir_favorites: dict`, `_user_window_offsets: dict`
   - Methods: `get_user_starred(user_id)`, `toggle_user_star(user_id, path)`, `get_user_mru(user_id)`, `update_user_mru(user_id, path)`, `get_user_window_offset(user_id, window_id)`, `update_user_window_offset(user_id, window_id, offset)`
   - Persistence: `to_dict() -> dict`, `from_dict(data: dict) -> None`
   - Constructor takes `schedule_save: Callable` callback (same pattern as `ThreadRouter.__init__`)
-- [ ] create module-level singleton: `user_preferences = UserPreferences()`
-- [ ] `session.py`: remove `user_dir_favorites` and `_user_window_offsets` fields from `SessionManager`
-- [ ] `session.py`: remove 6 methods: `get_user_starred`, `toggle_user_star`, `get_user_mru`, `update_user_mru`, `get_user_window_offset`, `update_user_window_offset`
-- [ ] `session.py` `__init__`: wire `user_preferences.set_schedule_save(self._schedule_save)` (same as `thread_router`)
-- [ ] `session.py` `_save_state()`: add `user_preferences.to_dict()` to saved data
-- [ ] `session.py` `_load_state()`: call `user_preferences.from_dict(data)` during load
-- [ ] `handlers/directory_browser.py`: replace `session_manager.get_user_starred(user_id)` → `user_preferences.get_user_starred(user_id)` (and MRU equivalents)
-- [ ] `handlers/directory_callbacks.py`: same import updates
-- [ ] `handlers/history.py`: replace `session_manager.get_user_window_offset` / `update_user_window_offset` → `user_preferences.*`
-- [ ] `bot.py`: update any direct preference calls (if any)
-- [ ] update `tests/ccgram/test_session_favorites.py`: test `UserPreferences` directly (import `user_preferences` instead of `session_manager`)
-- [ ] verify `tests/integration/test_state_roundtrip.py` passes — state.json format must remain unchanged (`user_dir_favorites` key preserved in the same location)
-- [ ] write tests: `test_starred_toggle`, `test_mru_eviction`, `test_offset_roundtrip`, `test_to_dict_from_dict`
-- [ ] `make check` — must pass
+- [x] create module-level singleton: `user_preferences = UserPreferences()`
+- [x] `session.py`: remove `user_dir_favorites` and `_user_window_offsets` fields from `SessionManager`
+- [x] `session.py`: remove 6 methods: `get_user_starred`, `toggle_user_star`, `get_user_mru`, `update_user_mru`, `get_user_window_offset`, `update_user_window_offset`
+- [x] `session.py` `__init__`: wire `user_preferences.set_schedule_save(self._schedule_save)` (same as `thread_router`)
+- [x] `session.py` `_save_state()`: add `user_preferences.to_dict()` to saved data
+- [x] `session.py` `_load_state()`: call `user_preferences.from_dict(data)` during load
+- [x] `handlers/directory_browser.py`: replace `session_manager.get_user_starred(user_id)` → `user_preferences.get_user_starred(user_id)` (and MRU equivalents)
+- [x] `handlers/directory_callbacks.py`: same import updates
+- [x] `handlers/history.py`: replace `session_manager.get_user_window_offset` / `update_user_window_offset` → `user_preferences.*`
+- [x] `bot.py`: update any direct preference calls (if any)
+- [x] update `tests/ccgram/test_session_favorites.py`: test `UserPreferences` directly (import `user_preferences` instead of `session_manager`)
+- [x] verify `tests/integration/test_state_roundtrip.py` passes — state.json format must remain unchanged (`user_dir_favorites` key preserved in the same location)
+- [x] write tests: `test_starred_toggle`, `test_mru_eviction`, `test_offset_roundtrip`, `test_to_dict_from_dict`
+- [x] `make check` — must pass
 
 ---
 

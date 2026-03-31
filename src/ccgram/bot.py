@@ -99,6 +99,7 @@ from .handlers.file_handler import handle_document_message, handle_photo_message
 from .handlers.voice_handler import handle_voice_message
 from .handlers.text_handler import handle_text_message
 from .session import session_manager
+from .user_preferences import user_preferences
 from .session_monitor import NewMessage, NewWindowEvent, SessionMonitor
 from .thread_router import thread_router
 from .telegram_request import ResilientPollingHTTPXRequest
@@ -719,7 +720,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
                 if session and session.file_path:
                     try:
                         file_size = Path(session.file_path).stat().st_size
-                        session_manager.update_user_window_offset(
+                        user_preferences.update_user_window_offset(
                             user_id, window_id, file_size
                         )
                     except OSError:
@@ -761,7 +762,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
             if session and session.file_path:
                 try:
                     file_size = Path(session.file_path).stat().st_size
-                    session_manager.update_user_window_offset(
+                    user_preferences.update_user_window_offset(
                         user_id, window_id, file_size
                     )
                 except OSError:
