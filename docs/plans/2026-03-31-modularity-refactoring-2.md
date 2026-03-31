@@ -100,14 +100,14 @@ Design doc: `docs/design/messaging-telegram/design.md`, `docs/design/topic-orche
 
 These functions are imported by `msg_spawn.py` despite their private naming. The underscore is a lie — they are de facto public APIs.
 
-- [ ] `handlers/msg_telegram.py` (line 74): rename `_resolve_topic` → `resolve_topic`; update all 5 internal call sites within the same file (search for `_resolve_topic(` in the file)
-- [ ] `handlers/topic_orchestration.py` (line 82): rename `_collect_target_chats` → `collect_target_chats`; update 2 internal call sites
-- [ ] `handlers/topic_orchestration.py` (line 132): rename `_create_topic_in_chat` → `create_topic_in_chat`; update internal calls
-- [ ] `handlers/msg_spawn.py`: update 3 imports:
+- [x] `handlers/msg_telegram.py` (line 74): rename `_resolve_topic` → `resolve_topic`; update all 5 internal call sites within the same file (search for `_resolve_topic(` in the file)
+- [x] `handlers/topic_orchestration.py` (line 82): rename `_collect_target_chats` → `collect_target_chats`; update 2 internal call sites
+- [x] `handlers/topic_orchestration.py` (line 132): rename `_create_topic_in_chat` → `create_topic_in_chat`; update internal calls
+- [x] `handlers/msg_spawn.py`: update 3 imports:
   - line 140/184: `from .msg_telegram import _resolve_topic` → `resolve_topic`
   - line 185: `from .topic_orchestration import _collect_target_chats, _create_topic_in_chat` → drop underscores
-- [ ] `tests/ccgram/handlers/test_topic_orchestration.py`: update ~9 occurrences of `_collect_target_chats` → `collect_target_chats` including patch strings like `"ccgram.handlers.topic_orchestration._collect_target_chats"`
-- [ ] `make check` — must pass
+- [x] `tests/ccgram/handlers/test_topic_orchestration.py`: update ~9 occurrences of `_collect_target_chats` → `collect_target_chats` including patch strings like `"ccgram.handlers.topic_orchestration._collect_target_chats"`
+- [x] `make check` — must pass
 
 ---
 

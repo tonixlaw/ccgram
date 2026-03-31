@@ -137,9 +137,9 @@ async def post_spawn_approval_keyboard(
 
     Returns True if the keyboard was successfully posted, False otherwise.
     """
-    from .msg_telegram import _resolve_topic
+    from .msg_telegram import resolve_topic
 
-    topic = _resolve_topic(requester_window)
+    topic = resolve_topic(requester_window)
     if topic is None:
         return False
 
@@ -181,14 +181,14 @@ async def _create_topic_for_spawn(
     window_name: str,
     req: SpawnRequest,
 ) -> None:
-    from .msg_telegram import _resolve_topic
-    from .topic_orchestration import _collect_target_chats, _create_topic_in_chat
+    from .msg_telegram import resolve_topic
+    from .topic_orchestration import collect_target_chats, create_topic_in_chat
 
-    target_chats = _collect_target_chats(window_id)
+    target_chats = collect_target_chats(window_id)
     for chat_id in target_chats:
-        await _create_topic_in_chat(bot, chat_id, window_id, window_name)
+        await create_topic_in_chat(bot, chat_id, window_id, window_name)
 
-    topic_info = _resolve_topic(req.requester_window)
+    topic_info = resolve_topic(req.requester_window)
     if topic_info:
         _, thread_id, chat_id, _ = topic_info
         text = f"\u2705 Spawned {window_name} ({window_id}) for: {req.prompt}"

@@ -71,7 +71,7 @@ def _is_local_qualified(qualified_id: str) -> bool:
     return session_prefix == tmux_session_name()
 
 
-def _resolve_topic(
+def resolve_topic(
     qualified_id: str,
 ) -> tuple[int, int, int, str] | None:
     """Find the Telegram topic for a qualified window ID.
@@ -134,7 +134,7 @@ async def notify_message_sent(
 
     Format: -> @5 (api-gateway) [request] API contract query
     """
-    topic = _resolve_topic(from_window)
+    topic = resolve_topic(from_window)
     if topic is None:
         return
 
@@ -167,7 +167,7 @@ async def notify_messages_delivered(
     if not messages:
         return
 
-    topic = _resolve_topic(to_window)
+    topic = resolve_topic(to_window)
     if topic is None:
         return
 
@@ -208,7 +208,7 @@ async def notify_reply_received(
 
     Format: Reply received from @5 (api-gateway) for: API contract query
     """
-    topic = _resolve_topic(original_msg.from_id)
+    topic = resolve_topic(original_msg.from_id)
     if topic is None:
         return
 
@@ -238,7 +238,7 @@ async def notify_pending_shell(
 
     Format: Pending message from @0 (payment-svc) [request]: ...body preview
     """
-    topic = _resolve_topic(window_id)
+    topic = resolve_topic(window_id)
     if topic is None:
         return
 
@@ -278,7 +278,7 @@ async def notify_loop_detected(
     """
     import hashlib
 
-    topic = _resolve_topic(window_a)
+    topic = resolve_topic(window_a)
     if topic is None:
         return
 
