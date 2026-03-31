@@ -47,6 +47,12 @@ async def clear_topic_state(
             else f"{config.tmux_session_name}:{window_id}"
         )
 
+    # Enqueue status-message delete BEFORE registry clears the message ID
+    if bot is not None:
+        await enqueue_status_update(
+            bot, user_id, window_id or "", None, thread_id=thread_id
+        )
+
     # Registry dispatch — all module-specific per-topic/window/chat state
     topic_state.clear_all(
         user_id,
@@ -63,15 +69,10 @@ async def clear_topic_state(
         from ..mailbox import Mailbox
 
         mb = Mailbox(config.mailbox_dir)
-        assert qualified_id is not None
-        mb.sweep(qualified_id)
-        mb.clear_inbox(qualified_id)
+        if qualified_id is not None:
+            mb.sweep(qualified_id)
+            mb.clear_inbox(qualified_id)
 
-    # Bot-specific async cleanup (not registerable — needs bot / async)
-    if bot is not None:
-        await enqueue_status_update(
-            bot, user_id, window_id or "", None, thread_id=thread_id
-        )
     await clear_interactive_msg(user_id, bot, thread_id)
 
     # user_data cleanup
