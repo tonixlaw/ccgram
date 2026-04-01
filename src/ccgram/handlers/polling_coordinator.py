@@ -462,7 +462,11 @@ async def update_status_message(
         await handle_interactive_ui(bot, user_id, window_id, thread_id)
         return
 
-    status_line = status.display_label if status and not status.is_interactive else None
+    status_line = None
+    if status and not status.is_interactive:
+        status_line = (
+            status.raw_text if "\n" in status.raw_text else status.display_label
+        )
 
     notif_mode = session_manager.get_notification_mode(window_id)
 
