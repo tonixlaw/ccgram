@@ -4,7 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.7.2] - 2026-04-06
+
+### Fixed
+- Disable interactive editors in agent windows
+
 ## [2.7.1] - 2026-04-04
+
+### Documentation
+- Update CHANGELOG.md for v2.7.1
+
 
 ### Fixed
 - Use resilient HTTPX requests for all bot traffic ([#49](https://github.com/alexei-led/ccgram/pull/49))
