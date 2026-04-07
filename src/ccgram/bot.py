@@ -35,6 +35,7 @@ from telegram import (
 )
 from telegram.error import BadRequest, Conflict, NetworkError, TelegramError
 from telegram.ext import (
+    AIORateLimiter,
     Application,
     CallbackQueryHandler,
     CommandHandler,
@@ -968,6 +969,7 @@ def create_bot() -> Application:
     application = (
         Application.builder()
         .token(config.telegram_bot_token)
+        .rate_limiter(AIORateLimiter(max_retries=5))
         .request(ResilientPollingHTTPXRequest())
         .get_updates_request(ResilientPollingHTTPXRequest(connection_pool_size=1))
         .post_init(post_init)
