@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.8.2] - 2026-04-09
+
+### Added
+- Enhance Telegram UX — reduce noise, delays, and flood ([#54](https://github.com/alexei-led/ccgram/pull/54))
+
+
+### Fixed
+- Handle missing autoclose topics and zsh shell markers ([#53](https://github.com/alexei-led/ccgram/pull/53))
+
 ## [2.8.1] - 2026-04-07
 
 ### Added
@@ -12,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - Sync documentation with v2.8.0 codebase changes
+- Update CHANGELOG.md for v2.8.1
 
 ## [2.8.0] - 2026-04-07
 
