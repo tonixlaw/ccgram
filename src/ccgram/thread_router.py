@@ -206,9 +206,20 @@ class ThreadRouter:
     def get_window_for_thread(self, user_id: int, thread_id: int) -> str | None:
         """Look up the window_id bound to a thread."""
         bindings = self.thread_bindings.get(user_id)
-        if not bindings:
-            return None
-        return bindings.get(thread_id)
+        if bindings and thread_id in bindings:
+            return bindings[thread_id]
+
+        # If not found directly, check if another user in the same group has bound it
+        key = f"{user_id}:{thread_id}"
+        chat_id = self.group_chat_ids.get(key)
+        if chat_id is not None and chat_id != user_id:
+            window_id = self.get_window_for_chat_thread(chat_id, thread_id)
+            if window_id is not None:
+                # Auto-bind so future lookups are fast and reverse-index works
+                self.bind_thread(user_id, thread_id, window_id)
+                return window_id
+
+        return None
 
     def get_thread_for_window(self, user_id: int, window_id: str) -> int | None:
         """Reverse lookup: get thread_id for a window (O(1) via reverse index)."""

@@ -71,6 +71,7 @@ Each Telegram Forum topic binds to one tmux window. Messages you type are sent a
 ### Session Control
 
 - **Topic-per-agent** — each Telegram Forum topic is one tmux window running one agent CLI
+- **Multi-user workspaces** — multiple users in the same Telegram group topic automatically share the same agent session
 - **Interactive prompts** — AskUserQuestion, ExitPlanMode, and Permission dialogs rendered as inline keyboards
 - **Slash commands** — provider-aware menu (Claude `/cost`, Codex `/status`, Gemini `/chat`, etc.); mismatched commands report errors
 - **Voice messages** — transcribed via Whisper API (OpenAI/Groq), shown with **Send / Discard** buttons before forwarding
