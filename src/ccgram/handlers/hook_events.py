@@ -44,6 +44,21 @@ def _resolve_users_for_window_key(
     return results
 
 
+def _dedup_users_by_topic(users: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    """Deduplicate users so that only one deterministic representative user per topic is returned.
+    
+    This avoids sending duplicate Telegram messages (like notifications or status updates)
+    when multiple users are bound to the same topic.
+    """
+    topics = {}
+    for uid, tid, wid in users:
+        chat_id = thread_router.resolve_chat_id(uid, tid)
+        key = (chat_id, tid)
+        if key not in topics or uid < topics[key][0]:
+            topics[key] = (uid, tid, wid)
+    return list(topics.values())
+
+
 async def _handle_notification(event: HookEvent, bot: Bot) -> None:
     """Handle a Notification event — render interactive UI."""
     from .interactive_ui import (
@@ -69,7 +84,7 @@ async def _handle_notification(event: HookEvent, bot: Bot) -> None:
     )
     wait_header = classify_wait_message(event.data.get("message", ""))
 
-    for user_id, thread_id, window_id in users:
+    for user_id, thread_id, window_id in _dedup_users_by_topic(users):
         if wait_header:
             claude_task_state.set_wait_header(window_id, wait_header)
             await enqueue_status_update(
@@ -108,7 +123,7 @@ async def _get_llm_summary(transcript_path: str) -> str | None:
         from ..llm.summarizer import summarize_completion
 
         return await summarize_completion(transcript_path)
-    except RuntimeError, OSError, ValueError:
+    except (RuntimeError, OSError, ValueError):
         logger.debug("LLM summary failed", exc_info=True)
         return None
 
@@ -156,7 +171,7 @@ async def _handle_stop(event: HookEvent, bot: Bot) -> None:
             except TimeoutError:
                 logger.debug("LLM summary timed out after %ss", _LLM_SUMMARY_TIMEOUT)
 
-    for user_id, thread_id, window_id in users:
+    for user_id, thread_id, window_id in _dedup_users_by_topic(users):
         claude_task_state.clear_wait_header(window_id)
         notif_mode = session_manager.get_notification_mode(window_id)
         if notif_mode in ("muted", "errors_only"):
@@ -279,7 +294,7 @@ async def _handle_teammate_idle(event: HookEvent, bot: Bot) -> None:
         teammate_name,
     )
 
-    for user_id, thread_id, window_id in users:
+    for user_id, thread_id, window_id in _dedup_users_by_topic(users):
         text = f"\U0001f4a4 Teammate '{teammate_name}' went idle"
         await enqueue_status_update(bot, user_id, window_id, text, thread_id=thread_id)
 
@@ -304,7 +319,7 @@ async def _handle_stop_failure(event: HookEvent, bot: Bot) -> None:
     detail = f": {error_details}" if error_details else ""
     text = f"\u26a0 API error — {error}{detail}"
 
-    for user_id, thread_id, _window_id in users:
+    for user_id, thread_id, _window_id in _dedup_users_by_topic(users):
         chat_id = thread_router.resolve_chat_id(user_id, thread_id)
         await rate_limit_send_message(bot, chat_id, text, message_thread_id=thread_id)
 
@@ -333,7 +348,7 @@ async def _handle_session_end(event: HookEvent, bot: Bot) -> None:
         session_manager.clear_window_session(window_id)
         clear_subagents(window_id)
 
-    for user_id, thread_id, window_id in users:
+    for user_id, thread_id, window_id in _dedup_users_by_topic(users):
         clear_seen_status(window_id)
         chat_id = thread_router.resolve_chat_id(user_id, thread_id)
         display = thread_router.get_display_name(window_id)
@@ -358,7 +373,7 @@ async def _handle_task_completed(event: HookEvent, bot: Bot) -> None:
         teammate_name,
     )
 
-    for user_id, thread_id, window_id in users:
+    for user_id, thread_id, window_id in _dedup_users_by_topic(users):
         task_id = event.data.get("task_id", "")
         tracked = False
         if task_id:

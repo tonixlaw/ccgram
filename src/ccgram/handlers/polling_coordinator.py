@@ -530,7 +530,7 @@ async def status_poll_loop(bot: Bot) -> None:
 
             await run_periodic_tasks(bot, all_windows, timers)
 
-            for user_id, thread_id, wid in list(thread_router.iter_thread_bindings()):
+            for user_id, thread_id, wid in thread_router.iter_topic_representatives():
                 structlog.contextvars.clear_contextvars()
                 structlog.contextvars.bind_contextvars(window_id=wid)
                 try:

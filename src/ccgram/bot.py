@@ -696,7 +696,11 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
         logger.info("No active users for session %s", msg.session_id)
         return
 
-    for user_id, window_id, thread_id in active_users:
+    delivered_topics: set[tuple[int, int]] = set()
+    # Tracks topics for which a clear_interactive_msg Telegram call was already made.
+    # Subsequent co-bound users only need their local state cleared, not a duplicate API call.
+    cleared_interactive_topics: set[tuple[int, int]] = set()
+    for user_id, window_id, thread_id in sorted(active_users, key=lambda x: x[0]):
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(
             window_id=window_id, session_id=msg.session_id
@@ -729,15 +733,26 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
 
         # Handle interactive tools specially - capture terminal and send UI
         if msg.tool_name in INTERACTIVE_TOOL_NAMES and msg.content_type == "tool_use":
-            # Mark interactive mode BEFORE sleeping so polling skips this window
-            set_interactive_mode(user_id, window_id, thread_id)
             # Flush pending messages (e.g. plan content) before sending interactive UI
             queue = get_message_queue(user_id)
             if queue:
                 await queue.join()
             # Wait briefly for Claude Code to render the question UI
             await asyncio.sleep(0.3)
-            handled = await handle_interactive_ui(bot, user_id, window_id, thread_id)
+            chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+            topic_key = (chat_id, thread_id)
+            # Already dispatched for this topic (multi-user): still update the read
+            # offset so /history stays correct, but skip UI render and mode mutation.
+            handled = topic_key in delivered_topics
+            if not handled:
+                # Mark interactive mode BEFORE rendering so polling skips this window
+                set_interactive_mode(user_id, window_id, thread_id)
+                handled = await handle_interactive_ui(bot, user_id, window_id, thread_id)
+                if handled:
+                    delivered_topics.add(topic_key)
+                else:
+                    # UI not rendered — clear the mode we just set
+                    clear_interactive_mode(user_id, thread_id)
             if handled:
                 # Update user's read offset
                 session = await session_manager.resolve_session_for_window(window_id)
@@ -750,13 +765,17 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
                     except OSError:
                         pass
                 continue  # Don't send the normal tool_use message
-            else:
-                # UI not rendered — clear the early-set mode
-                clear_interactive_mode(user_id, thread_id)
 
-        # Any non-interactive message means the interaction is complete — delete the UI message
+        # Any non-interactive message means the interaction is complete — delete the UI message.
+        # Deduplicate the Telegram delete API call per topic; still clear per-user local state.
         if get_interactive_msg_id(user_id, thread_id):
-            await clear_interactive_msg(user_id, bot, thread_id)
+            _ci_chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+            _ci_key = (_ci_chat_id, thread_id)
+            if _ci_key not in cleared_interactive_topics:
+                await clear_interactive_msg(user_id, bot, thread_id)
+                cleared_interactive_topics.add(_ci_key)
+            else:
+                clear_interactive_mode(user_id, thread_id)
 
         parts = build_response_parts(
             msg.text,
@@ -766,20 +785,24 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
         )
 
         if msg.is_complete:
-            # Enqueue content message task
-            # Note: tool_result editing is handled inside _process_content_task
-            # to ensure sequential processing with tool_use message sending
-            await enqueue_content_message(
-                bot=bot,
-                user_id=user_id,
-                window_id=window_id,
-                parts=parts,
-                tool_use_id=msg.tool_use_id,
-                tool_name=msg.tool_name,
-                content_type=msg.content_type,
-                text=msg.text,
-                thread_id=thread_id,
-            )
+            chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+            topic_key = (chat_id, thread_id)
+            if topic_key not in delivered_topics:
+                # Enqueue content message task
+                # Note: tool_result editing is handled inside _process_content_task
+                # to ensure sequential processing with tool_use message sending
+                await enqueue_content_message(
+                    bot=bot,
+                    user_id=user_id,
+                    window_id=window_id,
+                    parts=parts,
+                    tool_use_id=msg.tool_use_id,
+                    tool_name=msg.tool_name,
+                    content_type=msg.content_type,
+                    text=msg.text,
+                    thread_id=thread_id,
+                )
+                delivered_topics.add(topic_key)
 
             # Update user's read offset to current file position
             # This marks these messages as "read" for this user

@@ -252,6 +252,20 @@ class ThreadRouter:
             for thread_id, window_id in bindings.items():
                 yield user_id, thread_id, window_id
 
+    def iter_topic_representatives(self) -> list[tuple[int, int, str]]:
+        """Yield one representative (user_id, thread_id, window_id) per Telegram topic.
+        
+        Deterministic: picks the lowest user_id in the topic. Used to prevent
+        duplicate Telegram messages when multiple users share a topic.
+        """
+        topics = {}
+        for uid, tid, wid in self.iter_thread_bindings():
+            chat_id = self.resolve_chat_id(uid, tid)
+            key = (chat_id, tid)
+            if key not in topics or uid < topics[key][0]:
+                topics[key] = (uid, tid, wid)
+        return list(topics.values())
+
     # ------------------------------------------------------------------
     # Group chat ID management
     # ------------------------------------------------------------------
