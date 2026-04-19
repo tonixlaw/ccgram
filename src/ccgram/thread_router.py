@@ -205,12 +205,27 @@ class ThreadRouter:
         self._schedule_save()
         return window_id
 
-    def get_window_for_thread(self, user_id: int, thread_id: int) -> str | None:
+    def get_window_for_thread(self, user_id: int, thread_id: int, chat_id: int | None = None) -> str | None:
         """Look up the window_id bound to a thread."""
         bindings = self.thread_bindings.get(user_id)
-        if not bindings:
-            return None
-        return bindings.get(thread_id)
+        if bindings and thread_id in bindings:
+            return bindings[thread_id]
+            
+        chat_key = f"{user_id}:{thread_id}"
+        effective_chat_id = chat_id if chat_id is not None else self.group_chat_ids.get(chat_key)
+        
+        if effective_chat_id is not None and effective_chat_id != user_id:
+            shared_wid = self.get_window_for_chat_thread(effective_chat_id, thread_id)
+            if shared_wid is not None:
+                logger.info(
+                    "Auto-binding user %d to shared topic window %s in chat %d",
+                    user_id, shared_wid, effective_chat_id
+                )
+                self.bind_thread(user_id, thread_id, shared_wid)
+                self.set_group_chat_id(user_id, thread_id, effective_chat_id)
+                return shared_wid
+
+        return None
 
     def get_thread_for_window(self, user_id: int, window_id: str) -> int | None:
         """Reverse lookup: get thread_id for a window (O(1) via reverse index)."""
@@ -224,6 +239,7 @@ class ThreadRouter:
         self,
         user_id: int,
         thread_id: int | None,
+        chat_id: int | None = None,
     ) -> str | None:
         """Resolve the tmux window_id for a user's thread.
 
@@ -231,7 +247,7 @@ class ThreadRouter:
         """
         if thread_id is None:
             return None
-        return self.get_window_for_thread(user_id, thread_id)
+        return self.get_window_for_thread(user_id, thread_id, chat_id=chat_id)
 
     def has_window(self, window_id: str) -> bool:
         """Check if any user has a binding to this window_id."""
