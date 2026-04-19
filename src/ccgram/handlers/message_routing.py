@@ -28,6 +28,8 @@ from .response_builder import build_response_parts
 
 logger = structlog.get_logger()
 
+from ..thread_router import thread_router
+
 _ERROR_KEYWORDS_RE = re.compile(
     r"\b(?:error|exception|failed|traceback|stderr|assertion)\b", re.IGNORECASE
 )
@@ -41,6 +43,9 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
     Routes via thread_bindings to deliver to the correct topic.
     """
     status = "complete" if msg.is_complete else "streaming"
+    cleared_interactive_topics: set[tuple[int, int | None]] = set()
+    delivered_topics: set[tuple[int, int | None]] = set()
+    rendered_interactive_topics: set[tuple[int, int | None]] = set()
     logger.info(
         "handle_new_message [%s]: session=%s, text_len=%d",
         status,
@@ -79,11 +84,18 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
 
         if msg.tool_name in INTERACTIVE_TOOL_NAMES and msg.content_type == "tool_use":
             set_interactive_mode(user_id, window_id, thread_id)
-            queue = get_message_queue(user_id)
-            if queue:
-                await queue.join()
-            await asyncio.sleep(0.3)
-            handled = await handle_interactive_ui(bot, user_id, window_id, thread_id)
+            chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+            topic_key = (chat_id, thread_id)
+            if topic_key not in rendered_interactive_topics:
+                queue = get_message_queue(user_id)
+                if queue:
+                    await queue.join()
+                await asyncio.sleep(0.3)
+                handled = await handle_interactive_ui(bot, user_id, window_id, thread_id)
+                rendered_interactive_topics.add(topic_key)
+            else:
+                handled = True  # Already handled by topic representative
+
             if handled:
                 session = await session_query.resolve_session_for_window(window_id)
                 if session and session.file_path:
@@ -99,7 +111,13 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
                 clear_interactive_mode(user_id, thread_id)
 
         if get_interactive_msg_id(user_id, thread_id):
-            await clear_interactive_msg(user_id, bot, thread_id)
+            chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+            topic_key = (chat_id, thread_id)
+            if topic_key not in cleared_interactive_topics:
+                await clear_interactive_msg(user_id, bot, thread_id)
+                cleared_interactive_topics.add(topic_key)
+            else:
+                clear_interactive_mode(user_id, thread_id)
 
         parts = build_response_parts(
             msg.text,
@@ -109,16 +127,20 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
         )
 
         if msg.is_complete:
-            await enqueue_content_message(
-                bot=bot,
-                user_id=user_id,
-                window_id=window_id,
-                parts=parts,
-                tool_use_id=msg.tool_use_id,
-                tool_name=msg.tool_name,
-                content_type=msg.content_type,  # type: ignore[arg-type]  # NewMessage.content_type is str, narrows at runtime
-                thread_id=thread_id,
-            )
+            chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+            topic_key = (chat_id, thread_id)
+            if topic_key not in delivered_topics:
+                await enqueue_content_message(
+                    bot=bot,
+                    user_id=user_id,
+                    window_id=window_id,
+                    parts=parts,
+                    tool_use_id=msg.tool_use_id,
+                    tool_name=msg.tool_name,
+                    content_type=msg.content_type,  # type: ignore[arg-type]  # NewMessage.content_type is str, narrows at runtime
+                    thread_id=thread_id,
+                )
+                delivered_topics.add(topic_key)
 
             session = await session_query.resolve_session_for_window(window_id)
             if session and session.file_path:

@@ -10,6 +10,7 @@ here; ``convert_status_to_content`` is defined here and imported by
 from __future__ import annotations
 
 import contextlib
+import time
 from collections.abc import Callable
 
 import structlog
@@ -59,8 +60,8 @@ def register_rc_active_provider(fn: Callable[[str], bool]) -> None:
 # State
 # ---------------------------------------------------------------------------
 
-# Status message tracking: (user_id, thread_key) -> (message_id, window_id, last_text, chat_id)
-_status_msg_info: dict[tuple[int, int], tuple[int, str, str, int]] = {}
+# Status message tracking: (user_id, thread_key) -> (message_id, window_id, last_text, chat_id, last_edit_time)
+_status_msg_info: dict[tuple[int, int], tuple[int, str, str, int, float]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +211,7 @@ async def send_status_text(
     skey = (user_id, thread_id_or_0)
     thread_id: int | None = thread_id_or_0 if thread_id_or_0 != 0 else None
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+    now = time.monotonic()
 
     history = _get_idle_history(user_id, thread_id_or_0, text)
     keyboard = build_status_keyboard(
@@ -220,15 +222,20 @@ async def send_status_text(
 
     existing = _status_msg_info.get(skey)
     if existing:
-        msg_id, stored_wid, last_text, stored_chat_id = existing
+        msg_id, stored_wid, last_text, stored_chat_id, last_edit_time = existing
         if stored_wid == window_id and text == last_text:
             return
         if stored_wid == window_id:
+            from .callback_data import IDLE_STATUS_TEXT
+            is_idle_transition = text.startswith(IDLE_STATUS_TEXT) or last_text.startswith(IDLE_STATUS_TEXT)
+            if not is_idle_transition and now - last_edit_time < 3.0:
+                return
+
             success = await edit_with_fallback(
                 bot, stored_chat_id, msg_id, text, reply_markup=keyboard
             )
             if success:
-                _status_msg_info[skey] = (msg_id, window_id, text, stored_chat_id)
+                _status_msg_info[skey] = (msg_id, window_id, text, stored_chat_id, now)
                 return
             _status_msg_info.pop(skey, None)
         else:
@@ -238,7 +245,7 @@ async def send_status_text(
         bot, chat_id, text, reply_markup=keyboard, **send_kwargs(thread_id)
     )
     if sent:
-        _status_msg_info[skey] = (sent.message_id, window_id, text, chat_id)
+        _status_msg_info[skey] = (sent.message_id, window_id, text, chat_id, now)
 
 
 async def clear_status_message(
@@ -250,7 +257,7 @@ async def clear_status_message(
     skey = (user_id, thread_id_or_0)
     info = _status_msg_info.pop(skey, None)
     if info:
-        msg_id, _, _, chat_id = info
+        msg_id, _, _, chat_id, _ = info
         try:
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         except TelegramError as e:
@@ -273,7 +280,7 @@ async def convert_status_to_content(
     if not info:
         return None
 
-    msg_id, stored_wid, _, chat_id = info
+    msg_id, stored_wid, _, chat_id, _ = info
     if stored_wid != window_id:
         with contextlib.suppress(TelegramError):
             await bot.delete_message(chat_id=chat_id, message_id=msg_id)

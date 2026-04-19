@@ -20,6 +20,7 @@ Key components:
 
 import re
 import structlog
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -129,6 +130,7 @@ class _ShellMonitorState:
     telegram_user_id: int = 0
     telegram_thread_id: int = 0
     telegram_generation: int = 0  # monotonic counter to discard stale fix suggestions
+    last_relay_time: float = 0.0  # throttle intermediate UI edits
 
 
 _shell_monitor_state: dict[str, _ShellMonitorState] = {}
@@ -488,14 +490,23 @@ async def _relay_passive_output(
     Formats as: ``❯ <command>`` header followed by output in a code block.
     """
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)
+    now = time.monotonic()
 
     if passive.text != state.last_output:
+        is_final = passive.exit_code is not None
+        if not is_final and state.msg_id is not None:
+            if now - state.last_relay_time < 3.0:
+                return
+
         state.last_output = passive.text
         cmd = _command_from_echo(passive.command_echo)
         combined = f"❯ {cmd}\n{passive.text}" if cmd else passive.text
-        state.msg_id = await _relay_output(
+        sent_msg_id = await _relay_output(
             bot, chat_id, thread_id, combined, msg_id=state.msg_id
         )
+        if sent_msg_id:
+            state.msg_id = sent_msg_id
+            state.last_relay_time = now
 
     if (
         passive.exit_code is not None
