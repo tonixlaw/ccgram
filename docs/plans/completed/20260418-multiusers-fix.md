@@ -1,5 +1,8 @@
 # Overview: Restore Multi-user Group Session Binding
 
+## Issue Description
+Multiple authorized users interacting with the bot in a shared Telegram group topic triggered duplicate responses from the LLM. Each message sent to the topic resulted in the bot processing and responding for every bound user individually, instead of treating the topic as a single shared session for the purpose of message delivery.
+
 ## Problem Identified
 Your analysis is exact. The multi-user deduction strategy and manual group mapping were introduced in older commits (`400d9a2` and `70de860`) on the `feat/multiusers` branch. However, upon investigating this exact codebase branch state:
 
@@ -7,7 +10,7 @@ Your analysis is exact. The multi-user deduction strategy and manual group mappi
 2. `hook_events.py` correctly uses `_dedup_users_by_topic` to enforce representative iteration.
 3. **Regression found**: The recent modularity refactoring on `main` deleted the main `bot.py` handlers and transposed them into `src/ccgram/handlers/message_routing.py`. The inline `handle_new_message` loop iterating over topic representation sets was lost, executing the LLM response loop separately for independent grouped IDs and firing duplicate `enqueue_content_message` hits!
 
-## Action Plan
+## Action Taken
 
 Since the structural commits are already natively part of `feat/multiusers`, we do not need to execute any `git merge origin/dev`. We just need to implement the lost deduplication state directly onto `message_routing.py`. 
 

@@ -1,5 +1,8 @@
 # Overview: Multi-User Topic Autobinding Fix
 
+## Issue Description
+When an authorized user sends a message in a Telegram group topic where another user already has an active session, the bot fails to recognize the existing shared session. Instead of automatically binding the new user to the existing tmux window, the bot asks the new user to select a directory, leading to redundant session creation and duplicate tmux windows for the same topic.
+
 ## Problem Identified
 When multiple authorized users are in the same Telegram group chat and one has already started a session in a topic (mounted to a tmux window), the system correctly handled bindings for that first user. However, when a second user sent their first message in that same topic, the `get_window_for_thread` lookup queried the `thread_bindings` solely by their unique user ID. Because they hadn't explicitly been bound yet, the query failed, returning an "unbound topic" state. This resulted in the second user being prompted to select a directory, which subsequently created a duplicate session and a duplicate tmux window.
 
